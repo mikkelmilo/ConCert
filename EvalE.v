@@ -194,6 +194,35 @@ Module InterpreterEnvList.
       Some (assignments,e)
     else None.
 
+
+  Fixpoint from_nested_app (e : expr) : expr :=
+    match e with
+    | eApp e1 e2 => from_nested_app e1
+    | _ => e
+    end.
+
+  Fixpoint args_nested_app (e : expr) : list expr :=
+    match e with
+    | eApp e1 e2 => args_nested_app e1 ++ [e2]
+    | _ => []
+    end.
+
+  Fixpoint mapM {A B} (f : A -> res B) (l : list A) : res (list B) :=
+    match l with
+    | [] => Ok []
+    | a :: l' => res <- f a;;
+                 tl <- mapM f l';;
+                 ret (res :: tl)
+    end.
+
+  Fixpoint dummy_named (l : list val) : list (name * val) :=
+    match l with
+    | [] => []
+    | x :: l' => ("x", x) :: dummy_named l'
+    end.
+
+  Open Scope list.
+
   Fixpoint expr_eval_general (fuel : nat) (named : bool) (Σ : global_env)
            (ρ : env val) (e : expr) : res val :=
     match fuel with
@@ -214,24 +243,45 @@ Module InterpreterEnvList.
         v <- expr_eval_general n named Σ ρ e1 ;;
         expr_eval_general n named Σ (ρ # [nm ~> v]) e2
       | eApp e1 e2 =>
-        match (expr_eval_general n named Σ ρ e1), (expr_eval_general n named Σ ρ e2) with
+        if named then
+          match (expr_eval_general n named Σ ρ e1),
+                (expr_eval_general n named Σ ρ e2) with
         | Ok (vClos ρ' nm cmLam _ _ b), Ok v =>
-          match (expr_eval_general n named Σ (ρ' # [nm ~> v]) b) with
-          | Ok v' => Ok v'
-          | err => err
-          end
+          res <- (expr_eval_general n named Σ (ρ' # [nm ~> v]) b);; ret res
         | Ok (vClos ρ' nm (cmFix fixname) ty1 ty2 b), Ok v =>
           let v_fix := (vClos ρ' nm (cmFix fixname) ty1 ty2 b) in
-          let res := expr_eval_general n named Σ
-                                       (ρ' # [fixname ~> v_fix] # [nm ~> v]) b in
-          match res with
-          | Ok v' => Ok v'
-          | err => err
-          end
+          res <- expr_eval_general n named Σ (ρ' # [fixname ~> v_fix] # [nm ~> v]) b;; ret res
         | Ok (vConstr ind n vs), Ok v => Ok (vConstr ind n (List.app vs [v]))
         | EvalError msg, _ => EvalError msg
         | _, EvalError msg => EvalError msg
         | NotEnoughFuel,_ | _, NotEnoughFuel => NotEnoughFuel
+          end
+        else
+        let e_no_app := from_nested_app e1 in
+        let app_args := args_nested_app e1 in
+        match (List.app app_args [e2]) with
+          | [] => res <- expr_eval_general n named Σ ρ e_no_app;; ret res
+          | e' :: args =>
+            match expr_eval_general n named Σ ρ e' with
+            |  Ok v => match (expr_eval_general n named Σ ρ e_no_app) with
+                      | Ok (vClos ρ' nm cmLam _ _ b) =>
+                        res <- (expr_eval_general n named Σ ρ' (vars_to_apps b args));;
+                        ret res
+                      | Ok (vClos ρ' nm (cmFix fixname) ty1 ty2 b) =>
+                        let v_fix := vClos ρ' nm (cmFix fixname) ty1 ty2 b in
+                        res <- expr_eval_general n named Σ (ρ' # [fixname ~> v_fix] # [nm ~> v]) (vars_to_apps b args);;
+                      ret res
+                      (* Does [from_nested_app e1] guarantees that list of args of [vConstr]
+               is empty? *)
+                      | Ok (vConstr ind nm vs) =>
+                        res <- mapM(expr_eval_general n named Σ ρ) app_args;;
+                            ret (vConstr ind nm (vs ++ res ++ [v]))
+                      | EvalError msg => EvalError msg
+                      | NotEnoughFuel => NotEnoughFuel
+                      end
+            | EvalError msg => EvalError msg
+            | NotEnoughFuel => NotEnoughFuel
+            end
         end
       | eConstr ind ctor =>
         match (resolve_constr Σ ind ctor) with
