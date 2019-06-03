@@ -223,6 +223,25 @@ Module InterpreterEnvList.
 
   Open Scope list.
 
+  Fixpoint eval_clos (ρ : env val) (f : env val -> expr -> res val) (v : val) (args : list expr) : res val :=
+    match args with
+    | [] => Ok v
+    | a :: args' =>
+      v' <- f ρ a ;;
+      match v with
+      | vClos ρ' nm cmLam _ _ b =>
+        res <- f (ρ' # [nm ~> v']) b;;
+        eval_clos ρ f res args'
+      | vClos ρ' nm (cmFix fixname) ty1 ty2 b =>
+        let v_fix := vClos ρ' nm (cmFix fixname) ty1 ty2 b in
+        res <- f (ρ' # [fixname ~> v_fix] # [nm ~> v']) b;;
+        eval_clos ρ f res args'
+      | vConstr ind nm vs =>
+        res <- mapM (f ρ) args' ;;
+            ret (vConstr ind nm (vs ++ res ++ [v']))
+      end
+    end.
+
   Fixpoint expr_eval_general (fuel : nat) (named : bool) (Σ : global_env)
            (ρ : env val) (e : expr) : res val :=
     match fuel with
@@ -243,46 +262,48 @@ Module InterpreterEnvList.
         v <- expr_eval_general n named Σ ρ e1 ;;
         expr_eval_general n named Σ (ρ # [nm ~> v]) e2
       | eApp e1 e2 =>
-        if named then
-          match (expr_eval_general n named Σ ρ e1),
-                (expr_eval_general n named Σ ρ e2) with
-        | Ok (vClos ρ' nm cmLam _ _ b), Ok v =>
-          res <- (expr_eval_general n named Σ (ρ' # [nm ~> v]) b);; ret res
-        | Ok (vClos ρ' nm (cmFix fixname) ty1 ty2 b), Ok v =>
-          let v_fix := (vClos ρ' nm (cmFix fixname) ty1 ty2 b) in
-          res <- expr_eval_general n named Σ (ρ' # [fixname ~> v_fix] # [nm ~> v]) b;; ret res
-        | Ok (vConstr ind n vs), Ok v => Ok (vConstr ind n (List.app vs [v]))
-        | EvalError msg, _ => EvalError msg
-        | _, EvalError msg => EvalError msg
-        | NotEnoughFuel,_ | _, NotEnoughFuel => NotEnoughFuel
-          end
-        else
+        (* if named then *)
+        (*   match (expr_eval_general n named Σ ρ e1), *)
+        (*         (expr_eval_general n named Σ ρ e2) with *)
+        (* | Ok (vClos ρ' nm cmLam _ _ b), Ok v => *)
+        (*   res <- (expr_eval_general n named Σ (ρ' # [nm ~> v]) b);; ret res *)
+        (* | Ok (vClos ρ' nm (cmFix fixname) ty1 ty2 b), Ok v => *)
+        (*   let v_fix := (vClos ρ' nm (cmFix fixname) ty1 ty2 b) in *)
+        (*   res <- expr_eval_general n named Σ (ρ' # [fixname ~> v_fix] # [nm ~> v]) b;; ret res *)
+        (* | Ok (vConstr ind n vs), Ok v => Ok (vConstr ind n (List.app vs [v])) *)
+        (* | EvalError msg, _ => EvalError msg *)
+        (* | _, EvalError msg => EvalError msg *)
+        (* | NotEnoughFuel,_ | _, NotEnoughFuel => NotEnoughFuel *)
+        (*   end *)
+        (* else *)
         let e_no_app := from_nested_app e1 in
         let app_args := args_nested_app e1 in
-        match (List.app app_args [e2]) with
-          | [] => res <- expr_eval_general n named Σ ρ e_no_app;; ret res
-          | e' :: args =>
-            match expr_eval_general n named Σ ρ e' with
-            |  Ok v => match (expr_eval_general n named Σ ρ e_no_app) with
-                      | Ok (vClos ρ' nm cmLam _ _ b) =>
-                        res <- (expr_eval_general n named Σ ρ' (vars_to_apps b args));;
-                        ret res
-                      | Ok (vClos ρ' nm (cmFix fixname) ty1 ty2 b) =>
-                        let v_fix := vClos ρ' nm (cmFix fixname) ty1 ty2 b in
-                        res <- expr_eval_general n named Σ (ρ' # [fixname ~> v_fix] # [nm ~> v]) (vars_to_apps b args);;
-                      ret res
-                      (* Does [from_nested_app e1] guarantees that list of args of [vConstr]
-               is empty? *)
-                      | Ok (vConstr ind nm vs) =>
-                        res <- mapM(expr_eval_general n named Σ ρ) app_args;;
-                            ret (vConstr ind nm (vs ++ res ++ [v]))
-                      | EvalError msg => EvalError msg
-                      | NotEnoughFuel => NotEnoughFuel
-                      end
-            | EvalError msg => EvalError msg
-            | NotEnoughFuel => NotEnoughFuel
-            end
-        end
+        cl <- (expr_eval_general n named Σ ρ e_no_app);;
+        eval_clos ρ (expr_eval_general n named Σ) cl (app_args ++ [e2])
+        (* match (List.app app_args [e2]) with *)
+        (*   | [] => res <- expr_eval_general n named Σ ρ e_no_app;; ret res *)
+        (*   | e' :: args => *)
+        (*     match expr_eval_general n named Σ ρ e' with *)
+        (*     |  Ok v => match (expr_eval_general n named Σ ρ e_no_app) with *)
+        (*               | Ok (vClos ρ' nm cmLam _ _ b) => *)
+        (*                 res <- (expr_eval_general n named Σ ρ' (vars_to_apps b args));; *)
+        (*                 ret res *)
+        (*               | Ok (vClos ρ' nm (cmFix fixname) ty1 ty2 b) => *)
+        (*                 let v_fix := vClos ρ' nm (cmFix fixname) ty1 ty2 b in *)
+        (*                 res <- expr_eval_general n named Σ (ρ' # [fixname ~> v_fix] # [nm ~> v]) (vars_to_apps b args);; *)
+        (*               ret res *)
+        (*               (* Does [from_nested_app e1] guarantees that list of args of [vConstr] *)
+        (*        is empty? *) *)
+        (*               | Ok (vConstr ind nm vs) => *)
+        (*                 res <- mapM(expr_eval_general n named Σ ρ) app_args;; *)
+        (*                     ret (vConstr ind nm (vs ++ res ++ [v])) *)
+        (*               | EvalError msg => EvalError msg *)
+        (*               | NotEnoughFuel => NotEnoughFuel *)
+        (*               end *)
+        (*     | EvalError msg => EvalError msg *)
+        (*     | NotEnoughFuel => NotEnoughFuel *)
+        (*     end *)
+        (* end *)
       | eConstr ind ctor =>
         match (resolve_constr Σ ind ctor) with
         | Some _ => Ok (vConstr ind ctor [])
@@ -659,7 +680,7 @@ Module Examples.
 
   Example eval_prog1_indexed :
     InterpreterEnvList.expr_eval_i 3 Σ [] (indexify [] prog1) = Ok (InterpreterEnvList.vConstr "Coq.Init.Datatypes.bool" "false" []).
-  Proof. simpl. reflexivity. Qed.
+  Proof. simpl. compute. reflexivity. Qed.
 
   Example eval_prog1' :
     InterpreterEnvFun.expr_eval 3 Σ InterpreterEnvFun.default_fun_env  prog1 = Ok (InterpreterEnvFun.vConstr "Coq.Init.Datatypes.bool" "false" []).

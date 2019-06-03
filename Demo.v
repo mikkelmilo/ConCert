@@ -59,20 +59,22 @@ Make Definition coq_my_negb := Eval compute in (expr_to_term Σ (indexify [] my_
 
 Import MonadNotation.
 
-Run TemplateProgram
-    (
-      t <- tmEval lazy (expr_eval_n 3 Σ [] my_negb_syn);;
-        match t with
-          Ok v =>
-          t' <- tmEval lazy (expr_to_term Σ (indexify [] (InterpreterEnvList.from_val v))) ;;
-          def <- tmUnquoteTyped (bool -> bool) t' ;;
-          tmDefinition "eval_my_negb" def ;;
-             print_nf "Done."
-        | EvalError msg => print_nf msg
-        | NotEnoughFuel => print_nf "Not enough fuel"
-        end
-    ).
 
+(* Not really checking, just translating a closure back to Coq term *)
+Definition tmCheckSound (nm : string) (e : expr ) (A : Type) : TemplateMonad _ :=
+  t <- tmEval lazy (expr_eval_n 100 Σ [] e);;
+    match t with
+      Ok v =>
+      t' <- tmEval lazy (expr_to_term Σ
+                       (indexify [] (from_val v))) ;;
+         def <- tmUnquoteTyped A t' ;;
+         tmDefinition nm def ;;
+         print_nf "Done."
+    | EvalError msg => print_nf msg
+    | NotEnoughFuel => print_nf "Not enough fuel"
+    end.
+
+Run TemplateProgram (tmCheckSound "eval_my_negb" my_negb_syn (bool -> bool)).
 
 Lemma my_negb_adequate : forall b, coq_my_negb b = eval_my_negb b.
 Proof.
