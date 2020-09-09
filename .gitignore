@@ -11,6 +11,8 @@
 *~
 CoqMakefile
 CoqMakefile.conf
+CoqMakefile.plugin
+CoqMakefile.plugin.conf
 Makefile.coq
 Makefile.coq.conf
 execution/CoqMakefile
@@ -59,3 +61,7 @@ nra.cache
 ### VisualStudioCode Patch ###
 # Ignore all local history of files
 .history
+
+## extraction output
+*.liq
+*.out

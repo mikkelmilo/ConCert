@@ -94,7 +94,21 @@ embedding/examples/Prelude.v
 embedding/examples/SimpleBlockchain.v
 
 -Q extraction/theories ConCert.Extraction
+extraction/theories/AffineLambdaCalculus.v
+extraction/theories/Aux.v
+extraction/theories/Certified.v
+extraction/theories/ClosedAux.v
+extraction/theories/Common.v
+extraction/theories/Erasure.v
+extraction/theories/ExAst.v
+extraction/theories/LPretty.v
 extraction/theories/Liquidity.v
+extraction/theories/MidlangExtract.v
+extraction/theories/OptimizeCorrectness.v
+extraction/theories/ResultMonad.v
+extraction/theories/StringExtra.v
+extraction/theories/WcbvEvalAux.v
+
 
 -Q extraction/examples ConCert.Extraction.Examples
 extraction/examples/Prelude.v
@@ -102,6 +116,13 @@ extraction/examples/Counter.v
 extraction/examples/SimpleBlockchain.v
 extraction/examples/crowdfunding_extract/CrowdfundingData.v
 extraction/examples/crowdfunding_extract/Crowdfunding.v
+extraction/examples/CounterCertifiedExtraction.v
+extraction/examples/CrowdfundingCertifiedExtraction.v
+extraction/examples/CounterDepCertifiedExtraction.v
+extraction/examples/CounterRefinementTypes.v
+extraction/examples/StackInterpreter.v
+extraction/examples/ErasuresTests.v
+extraction/examples/MidlangExtractTests.v
 
 
 embedding/theories/pcuic/PCUICCorrectness.v
