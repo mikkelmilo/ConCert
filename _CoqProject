@@ -106,6 +106,7 @@ extraction/theories/LPretty.v
 extraction/theories/Liquidity.v
 extraction/theories/LiquidityExtract.v
 extraction/theories/MidlangExtract.v
+extraction/theories/RustExtract.v
 extraction/theories/Optimize.v
 extraction/theories/OptimizeCorrectness.v
 extraction/theories/PrettyPrinterMonad.v
@@ -125,6 +126,7 @@ extraction/examples/ElmExtractTests.v
 extraction/examples/ErasureTests.v
 extraction/examples/ForPaper.v
 extraction/examples/MidlangExtractTests.v
+extraction/examples/RustExtractTests.v
 extraction/examples/PreludeExt.v
 extraction/examples/SimpleBlockchainExt.v
 extraction/examples/StackInterpreter.v
