@@ -1,9 +1,11 @@
 From Coq Require Import Arith.
 From Coq Require Import Bool.
 From Coq Require Import List.
+From Coq Require Import Psatz.
 From Equations Require Import Equations.
 From MetaCoq Require Import utils.
 
+Derive Signature for Alli.
 Derive Signature for Forall.
 Derive Signature for Forall2.
 Derive Signature for OnOne2.
@@ -37,3 +39,92 @@ Ltac propify :=
     | [|- context[orb _ _ = false]] => rewrite Bool.orb_false_iff
     | [|- context[orb _ _ = true]] => rewrite Bool.orb_true_iff
     end.
+
+Definition map_fst {A B C} (f : A -> B) (p : A × C) : B × C :=
+  (f p.1, p.2).
+
+Definition map_snd {A B C} (f : B -> C) (p : A × B) : A × C :=
+  (p.1, f p.2).
+
+Definition alli {X} (f : nat -> X -> bool) : nat -> list X -> bool :=
+  fix alli (n : nat) (xs : list X) :=
+    match xs with
+    | [] => true
+    | x :: xs => f n x && alli (S n) xs
+    end.
+
+Lemma alli_Alli {A} (f : nat -> A -> bool) (n : nat) (l : list A) :
+  alli f n l -> Alli (fun n a => f n a) n l.
+Proof.
+  intros a.
+  induction l in n, a |- *.
+  - constructor.
+  - cbn in *.
+    propify.
+    constructor; [easy|].
+    now apply IHl.
+Qed.
+
+Lemma Alli_alli {A} (f : nat -> A -> bool) (n : nat) (l : list A) :
+  Alli (fun n a => f n a) n l -> alli f n l.
+Proof.
+  intros a.
+  induction l in n, a |- *.
+  - easy.
+  - depelim a.
+    cbn.
+    now rewrite i, IHl.
+Qed.
+
+Lemma Alli_map {A B} (P : nat -> B -> Type) n (f : A -> B) (l : list A) :
+  Alli (fun n a => P n (f a)) n l ->
+  Alli P n (map f l).
+Proof. now induction 1; cbn; constructor. Qed.
+
+Lemma Forall_snoc {A} (P : A -> Prop) (l : list A) (a : A) :
+  Forall P (l ++ [a]) ->
+  Forall P l /\ P a.
+Proof.
+  intros all.
+  apply Forall_app in all.
+  intuition.
+  now inversion H0.
+Qed.
+
+Lemma Forall_repeat {A} (P : A -> Prop) (a : A) (n : nat) :
+  P a ->
+  Forall P (repeat a n).
+Proof.
+  intros pa.
+  now induction n; constructor.
+Qed.
+
+Lemma skipn_firstn_slice {A} n n' (l : list A) :
+  n <= n' ->
+  skipn n (firstn n' l) ++ skipn n' l = skipn n l.
+Proof.
+  intros le.
+  induction n in n, n', le, l |- *.
+  - now rewrite !skipn_0, firstn_skipn.
+  - destruct n'; [easy|].
+    destruct l; [easy|].
+    rewrite firstn_cons, !skipn_cons.
+    apply IHn.
+    lia.
+Qed.
+
+Lemma existsb_map {A B} (p : B -> bool) (f : A -> B) (l : list A) :
+  existsb p (map f l) = existsb (fun a => p (f a)) l.
+Proof.
+  induction l; [easy|]; cbn in *.
+  now rewrite IHl.
+Qed.
+
+Lemma Forall_existsb_false {A} (p : A -> bool) (l : list A) :
+  Forall (fun a => p a = false) l ->
+  existsb p l = false.
+Proof.
+  induction 1; [easy|].
+  cbn in *.
+  now rewrite H, IHForall.
+Qed.

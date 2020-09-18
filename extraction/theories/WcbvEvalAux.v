@@ -1,7 +1,9 @@
 From ConCert.Extraction Require Import Aux.
 From ConCert.Extraction Require Import ClosedAux.
+From ConCert.Extraction Require Import WcbvEvalType.
 From Coq Require Import Arith.
 From Coq Require Import Bool.
+From Coq Require Import Eqdep_dec.
 From Coq Require Import List.
 From Coq Require Import Psatz.
 From Coq Require Import String.
@@ -12,13 +14,10 @@ From MetaCoq.Erasure Require Import ECSubst.
 From MetaCoq.Erasure Require Import EInduction.
 From MetaCoq.Erasure Require Import EInversion.
 From MetaCoq.Erasure Require Import ELiftSubst.
-From MetaCoq.Erasure Require Import EWcbvEval.
 From MetaCoq.Template Require Import utils.
 
 Import ListNotations.
 Set Equations Transparent.
-
-Notation "Σ ⊢ s ▷ t" := (eval Σ s t) (at level 50, s, t at next level) : type_scope.
 
 Lemma eval_tApp_head Σ hd arg v :
   Σ ⊢ tApp hd arg ▷ v ->
@@ -140,8 +139,8 @@ Proof.
     + easy.
 Qed.
 
-Definition env_closed (Σ : EAst.global_declarations) :=
-  Forall (decl_closed ∘ snd) Σ.
+Definition env_closed (Σ : EAst.global_declarations) : bool :=
+  forallb (decl_closed ∘ snd) Σ.
 
 Lemma closed_constant Σ kn cst body :
   env_closed Σ ->
@@ -154,9 +153,7 @@ Proof.
   rewrite lookup_env_find in decl_const.
   destruct (find _ _) eqn:find; [|easy].
   apply find_some in find.
-  unfold env_closed in env_clos.
-  rewrite Forall_forall in env_clos.
-  specialize (env_clos _ (proj1 find)).
+  eapply forallb_forall in env_clos; [|exact (proj1 find)].
   destruct p.
   cbn in *.
   noconf decl_const.
@@ -322,58 +319,438 @@ Proof.
   - easy.
 Qed.
 
-Lemma eval_stuck_fix Σ args argsv mfix idx :
-  All2 (eval Σ) args argsv ->
-  isStuckFix (tFix mfix idx) argsv ->
-  Σ ⊢ (mkApps (tFix mfix idx) args) ▷ (mkApps (tFix mfix idx) argsv).
+Fixpoint deriv_length {Σ t v} (ev : Σ ⊢ t ▷ v) : nat :=
+  match ev with
+  | eval_atom _ _ => 1
+  | red_cofix_case _ _ _ _ _ _ _ _ _ ev
+  | red_cofix_proj _ _ _ _ _ _ _ _ ev
+  | eval_delta _ _ _ _ _ _ ev
+  | eval_proj_box _ _ _ _ ev => S (deriv_length ev)
+  | eval_box _ _ _ ev1 ev2
+  | eval_zeta _ _ _ _ _ ev1 ev2
+  | eval_iota _ _ _ _ _ _ _ ev1 ev2
+  | eval_iota_sing _ _ _ _ _ _ _ ev1 _ ev2
+  | eval_fix_value _ _ _ _ _ _ _ _ ev1 ev2 _ _
+  | eval_proj _ _ _ _ _ _ ev1 ev2
+  | eval_app_cong _ _ _ _ ev1 _ ev2 => S (deriv_length ev1 + deriv_length ev2)
+  | eval_beta _ _ _ _ _ _ ev1 ev2 ev3
+  | eval_fix _ _ _ _ _ _ _ _ _ ev1 ev2 _ _ _ ev3 =>
+    S (deriv_length ev1 + deriv_length ev2 + deriv_length ev3)
+  end.
+
+Lemma deriv_length_min {Σ t v} (ev : Σ ⊢ t ▷ v) :
+  1 <= deriv_length ev.
+Proof. destruct ev; cbn in *; lia. Qed.
+
+Lemma eval_tApp_deriv {Σ hd arg v} (ev : Σ ⊢ tApp hd arg ▷ v) :
+  ∑ hdv (ev_hd : Σ ⊢ hd ▷ hdv) argv (ev_arg : Σ ⊢ arg ▷ argv),
+    S (deriv_length ev_hd + deriv_length ev_arg) <= deriv_length ev.
 Proof.
-  revert argsv.
-  induction args as [|a args IH] using MCList.rev_ind;
-    intros argsv all stuck.
-  - apply All2_length in all.
-    destruct argsv; [|easy].
-    now apply eval_atom.
-  - destruct argsv as [|? ? _] using MCList.rev_ind;
-      [apply All2_length in all; rewrite app_length in all; now cbn in *|].
-    apply All2_app_r in all as (all & ev_a).
-    rewrite <- !mkApps_nested.
-    cbn in *.
-    destruct (cunfold_fix mfix idx) as [(? & ?)|] eqn:cuf; [|easy].
-    eapply eval_fix_value.
-    + apply IH; [easy|].
-      destruct (cunfold_fix mfix idx) as [(? & ?)|]; [|easy].
-      unfold ETyping.is_nth_constructor_app_or_box in *.
-      destruct (nth_error argsv _) eqn:nth; [|easy].
-      now erewrite nth_error_app_left in stuck.
-    + easy.
-    + easy.
-    + destruct (Nat.eqb_spec #|argsv| n) as [<-|].
-      * unfold ETyping.is_nth_constructor_app_or_box in *.
-        now rewrite nth_error_snoc in stuck.
-      * now left.
+  depelim ev; cbn in *;
+    try now eexists _, ev1, _, ev2.
+  easy.
 Qed.
 
-Lemma value_final Σ e : value e -> Σ ⊢ e ▷ e.
+Fixpoint sum_deriv_lengths {Σ ts tsv} (a : All2 (eval Σ) ts tsv) : nat :=
+  match a with
+  | All2_nil => 0
+  | All2_cons _ _ _ _ ev a => deriv_length ev + sum_deriv_lengths a
+  end.
+
+Fixpoint app_All2
+         {A B}
+         {T : A -> B -> Type}
+         {la lb la' lb'}
+         (a1 : All2 T la lb)
+         (a2 : All2 T la' lb') : All2 T (la ++ la') (lb ++ lb').
 Proof.
-  induction 1 using value_values_rect; cbn in *.
-  - now apply eval_atom.
-  - induction l using MCList.rev_ind.
-    + cbn in *.
-      destruct t; cbn in *; propify; try easy; now apply eval_atom.
-    + rewrite mkApps_app.
-      cbn.
-      apply All_app in H0 as (? & ?).
-      apply All_app in H1 as (? & ?).
-      depelim a0.
-      depelim a2.
-      apply eval_app_cong.
-      * now apply IHl.
-      * rewrite isFixApp_mkApps by (now destruct t).
-        destruct l using List.rev_ind; [now destruct t|].
-        rewrite mkApps_app.
-        now destruct t.
-      * easy.
-  - destruct f; try easy.
-    apply All_All2_refl in H0.
-    now apply eval_stuck_fix.
+  destruct a1.
+  - exact a2.
+  - refine (All2_cons t _).
+    exact (app_All2 _ _ _ _ _ _ _ a1 a2).
+Defined.
+
+Lemma eval_mkApps_deriv {Σ hd args v} (ev : Σ ⊢ mkApps hd args ▷ v) :
+  ∑ hdv (ev_hd : Σ ⊢ hd ▷ hdv) argsv (ev_args : All2 (eval Σ) args argsv),
+    deriv_length ev_hd + #|args| + sum_deriv_lengths ev_args <= deriv_length ev.
+Proof.
+  revert hd v ev.
+  induction args; intros hd v ev; cbn in *.
+  - exists _, ev, [], All2_nil.
+    now cbn.
+  - specialize (IHargs _ _ ev) as (hdv & ev_hd & argsv & ev_args & len).
+    specialize (eval_tApp_deriv ev_hd) as (hdv' & ev_hdv' & argv & ev_argv & len').
+    exists _, ev_hdv', (argv :: argsv).
+    exists (All2_cons ev_argv ev_args).
+    cbn in *.
+    lia.
+Qed.
+
+Lemma sum_deriv_lengths_app_All2 {Σ}
+      {ts tsv} (a : All2 (eval Σ) ts tsv)
+      {ts' tsv'} (a' : All2 (eval Σ) ts' tsv') :
+  sum_deriv_lengths (app_All2 a a') = sum_deriv_lengths a + sum_deriv_lengths a'.
+Proof.
+  induction a in ts', tsv', a' |- *; [easy|].
+  cbn in *.
+  now rewrite IHa.
+Qed.
+
+Ltac determ :=
+  repeat
+    match goal with
+    | [ev1 : ?Σ ⊢ ?t ▷ ?v, ev2 : ?Σ ⊢ ?t ▷ ?v' |- _] =>
+      match v with
+      | v' => fail 1
+      | _ => idtac
+      end;
+      match goal with
+      | [H: v = v' |- _] => fail 1
+      | [H: v' = v |- _] => fail 1
+      | _ => idtac
+      end;
+      pose proof (eval_deterministic ev1 ev2)
+    end;
+  subst.
+
+Lemma term_forall_list_rect :
+  forall P : term -> Type,
+    (P tBox) ->
+    (forall n : nat, P (tRel n)) ->
+    (forall i : ident, P (tVar i)) ->
+    (forall (n : nat) (l : list term), All P l -> P (tEvar n l)) ->
+    (forall (n : name) (t : term), P t -> P (tLambda n t)) ->
+    (forall (n : name) (t : term),
+        P t -> forall t0 : term, P t0 -> P (tLetIn n t t0)) ->
+    (forall t u : term, P t -> P u -> P (tApp t u)) ->
+    (forall s, P (tConst s)) ->
+    (forall (i : inductive) (n : nat), P (tConstruct i n)) ->
+    (forall (p : inductive * nat) (t : term),
+        P t -> forall l : list (nat * term),
+            tCaseBrsProp P l -> P (tCase p t l)) ->
+    (forall (s : projection) (t : term), P t -> P (tProj s t)) ->
+    (forall (m : mfixpoint term) (n : nat), All (fun x => P (dbody x)) m -> P (tFix m n)) ->
+    (forall (m : mfixpoint term) (n : nat), All (fun x => P (dbody x)) m -> P (tCoFix m n)) ->
+    forall t : term, P t.
+Proof.
+  intros until t. revert t.
+  fix auxt 1.
+  move auxt at top.
+  destruct t; match goal with
+                 H : _ |- _ => apply H
+              end; auto.
+  revert l.
+  fix auxl' 1.
+  destruct l; constructor; [|apply auxl'].
+  apply auxt.
+  revert l.
+  fix auxl' 1.
+  destruct l; constructor; [|apply auxl'].
+  apply auxt.
+
+  revert m.
+  fix auxm 1.
+  destruct m; constructor; [|apply auxm].
+  apply auxt.
+
+  revert m.
+  fix auxm 1.
+  destruct m; constructor; [|apply auxm].
+  apply auxt.
+Defined.
+
+(* We need UIP below *)
+Instance EqDec_term : EqDec term.
+Proof.
+  intros x.
+  induction x using term_forall_list_rect; intros []; try solve [right; discriminate].
+  - now left.
+  - destruct (eq_dec n n0); subst; [left|right]; congruence.
+  - destruct (eq_dec i i0); subst; [left|right]; congruence.
+  - destruct (eq_dec n n0); subst; [|right; congruence].
+    destruct (eq_dec #|l| #|l0|); [|right; congruence].
+    enough ({l = l0} + {l <> l0}).
+    { destruct H0; [left|right]; congruence. }
+    induction H in l0, e |- *.
+    + destruct l0; [|easy].
+      now left.
+    + destruct l0; [easy|].
+      destruct (p t); subst; [|right; congruence].
+      destruct (IHAll l0 ltac:(easy)); subst; [left|right]; congruence.
+  - destruct (eq_dec n n0); subst; [|right; congruence].
+    destruct (IHx t); subst; [left|right]; congruence.
+  - destruct (eq_dec n n0); subst; [|right; congruence].
+    destruct (IHx1 t); subst; [|right; congruence].
+    destruct (IHx2 t0); subst; [left|right]; congruence.
+  - destruct (IHx1 t); subst; [|right; congruence].
+    destruct (IHx2 t0); subst; [left|right]; congruence.
+  - destruct (eq_dec s k); subst; [left|right]; congruence.
+  - destruct (eq_dec i i0); subst; [|right; congruence].
+    destruct (eq_dec n n0); subst; [left|right]; congruence.
+  - destruct (eq_dec p p0); subst; [|right; congruence].
+    destruct (IHx t); subst; [|right; congruence].
+    destruct (eq_dec #|l| #|l0|); [|right; congruence].
+    enough ({l = l0} + {l <> l0}).
+    { destruct H; subst; [left|right]; congruence. }
+    induction X in l0, e |- *.
+    + destruct l0; [|easy].
+      now left.
+    + destruct l0; cbn in *; [easy|].
+      destruct (p p1.2); [|right; congruence].
+      destruct (eq_dec x.1 p1.1); [|right; congruence].
+      destruct (IHX l0 ltac:(easy)); subst; [|right; congruence].
+      destruct x, p1; cbn in *; subst.
+      now left.
+  - destruct (eq_dec s p); subst; [|right; congruence].
+    destruct (IHx t); [left|right]; congruence.
+  - destruct (eq_dec n n0); subst; [|right; congruence].
+    destruct (eq_dec #|m| #|m0|); [|right; congruence].
+    enough ({m = m0} + {m <> m0}).
+    { destruct H0; subst; [left|right]; congruence. }
+    induction H in m0, e |- *.
+    + destruct m0; [|easy].
+      now left.
+    + destruct m0; cbn in *; [easy|].
+      destruct (eq_dec (dname x) (dname d)); [|right; congruence].
+      destruct (p (dbody d)); [|right; congruence].
+      destruct (eq_dec (rarg x) (rarg d)); [|right; congruence].
+      destruct (IHAll m0 ltac:(easy)); subst; [|right; congruence].
+      destruct x, d; cbn in *; subst.
+      now left.
+  - destruct (eq_dec n n0); subst; [|right; congruence].
+    destruct (eq_dec #|m| #|m0|); [|right; congruence].
+    enough ({m = m0} + {m <> m0}).
+    { destruct H0; subst; [left|right]; congruence. }
+    induction H in m0, e |- *.
+    + destruct m0; [|easy].
+      now left.
+    + destruct m0; cbn in *; [easy|].
+      destruct (eq_dec (dname x) (dname d)); [|right; congruence].
+      destruct (p (dbody d)); [|right; congruence].
+      destruct (eq_dec (rarg x) (rarg d)); [|right; congruence].
+      destruct (IHAll m0 ltac:(easy)); subst; [|right; congruence].
+      destruct x, d; cbn in *; subst.
+      now left.
+Qed.
+
+Lemma deriv_lengths_eq {Σ t v} (ev1 ev2 : Σ ⊢ t ▷ v) :
+  deriv_length ev1 = deriv_length ev2.
+Proof.
+  revert ev2.
+  depind ev1; intros ev2; cbn in *.
+  - depelim ev2; cbn in *; determ; try congruence; try solve_discr.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    noconf H0.
+    intuition.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    + noconf H.
+      intuition.
+    + apply eval_mkApps_tCoFix in ev1_1 as H.
+      destruct H; solve_discr.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    + noconf e0.
+      intuition.
+    + apply eval_mkApps_tCoFix in ev1_1 as H.
+      destruct H; solve_discr.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    + noconf H.
+      rewrite e1 in e.
+      noconf e.
+      intuition.
+    + noconf H.
+      rewrite e1 in e.
+      noconf e.
+      destruct o as [|(_ & ?)]; [easy|].
+      now rewrite i in H.
+    + rewrite isFixApp_mkApps in i0 by easy.
+      cbn in *.
+      now rewrite Bool.orb_true_r in i0.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    + noconf H.
+      rewrite e0 in e.
+      noconf e.
+      destruct o as [|(_ & ?)]; [easy|].
+      now rewrite i in H.
+    + apply mkApps_eq_inj in e' as H'; try easy.
+      destruct H' as (H' & <-).
+      noconf H'.
+      assert (e' = eq_refl) as -> by (now apply uip).
+      cbn in *.
+      subst ev0.
+      rewrite e0 in e.
+      noconf e.
+      cbn in *.
+      intuition.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    + apply eval_mkApps_tCoFix in ev2_1 as H.
+      destruct H; solve_discr.
+    + apply eval_mkApps_tCoFix in ev2_1 as H.
+      destruct H; solve_discr.
+    + apply mkApps_eq_inj in e' as H'; try easy.
+      destruct H' as (H' & <-).
+      noconf H'.
+      assert (e' = eq_refl) as -> by (now apply uip).
+      cbn in *.
+      subst ev0.
+      rewrite e0 in e.
+      noconf e.
+      cbn in *.
+      intuition.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    + apply mkApps_eq_inj in e1 as H'; try easy.
+      destruct H' as (H' & <-).
+      noconf H'.
+      rewrite e0 in e.
+      noconf e.
+      assert (e1 = eq_refl) as -> by (now apply uip).
+      cbn in *.
+      subst ev0.
+      cbn in *.
+      intuition.
+    + apply eval_mkApps_tCoFix in ev2_1 as H.
+      destruct H; solve_discr.
+    + apply eval_mkApps_tCoFix in ev2 as H.
+      destruct H; solve_discr.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    unfold ETyping.declared_constant in *.
+    assert (body0 = body) as -> by congruence.
+    intuition.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    apply eval_mkApps_tCoFix in ev1_1 as H.
+    destruct H; solve_discr.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    apply eval_mkApps_tCoFix in ev1 as H.
+    destruct H; solve_discr.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    rewrite isFixApp_mkApps in i by easy.
+    cbn in *.
+    rewrite Bool.orb_true_r in i.
+    now cbn in *.
+  - depelim ev2; cbn in *; determ; cbn in *; try congruence; try solve_discr.
+    assert (e = eq_refl) as -> by (now apply uip).
+    cbn in *.
+    now subst ev0.
+Qed.
+
+Lemma All2_split_eq
+      {X Y} {T : X -> Y -> Type}
+      {xs ys xs' ys'}
+      (a : All2 T (xs ++ xs') (ys ++ ys')) :
+  #|xs| = #|ys| ->
+  ∑ apref asuf, a = app_All2 apref asuf.
+Proof.
+  intros eq.
+  induction xs in xs, ys, xs', ys', a, eq |- *.
+  - destruct ys; [|easy].
+    cbn in *.
+    now exists All2_nil, a.
+  - destruct ys; [easy|].
+    cbn in *.
+    depelim a.
+    specialize (IHxs ys xs' ys' a ltac:(easy)) as (apref & asuf & ->).
+    now exists (All2_cons t apref), asuf.
+Qed.
+
+Lemma All2_rev_rect X Y (T : X -> Y -> Type) (P : forall xs ys, All2 T xs ys -> Type) :
+  P [] [] All2_nil ->
+  (forall x y xs ys (t : T x y) (a : All2 T xs ys),
+      P xs ys a -> P (xs ++ [x]) (ys ++ [y]) (app_All2 a (All2_cons t All2_nil))) ->
+  forall xs ys (a : All2 T xs ys), P xs ys a.
+Proof.
+  intros nil_case snoc_case.
+  induction xs using MCList.rev_ind; intros ys a.
+  - now depelim a.
+  - destruct ys as [|y ys _] using MCList.rev_ind.
+    + apply All2_length in a as ?.
+      rewrite app_length in *.
+      now cbn in *.
+    + unshelve epose proof (All2_split_eq a _) as (? & ? & ->).
+      * apply All2_length in a.
+        rewrite !app_length in a.
+        now cbn in *.
+      * depelim x1.
+        depelim x3.
+        apply snoc_case.
+        apply IHxs.
+Qed.
+
+Inductive All2_eval_app_spec Σ : list term -> term ->
+                                 list term -> term ->
+                                 forall ts tsv, All2 (eval Σ) ts tsv -> Type :=
+| All2_eval_app_intro {ts tsv} (a : All2 (eval Σ) ts tsv)
+                      {x xv} (evx : Σ ⊢ x ▷ xv) :
+    All2_eval_app_spec
+      Σ ts x tsv xv
+      (ts ++ [x])
+      (tsv ++ [xv])
+      (app_All2 a (All2_cons evx All2_nil)).
+
+Derive Signature for All2.
+Derive NoConfusionHom for All2.
+
+Lemma All2_eval_snoc_elim
+      {Σ ts tsv x xv} (a : All2 (eval Σ) (ts ++ [x]) (tsv ++ [xv])) :
+  All2_eval_app_spec Σ ts x tsv xv _ _ a.
+Proof.
+  unshelve epose proof (All2_split_eq a _) as (? & ev & ->).
+  - apply All2_length in a.
+    rewrite !app_length in a.
+    now cbn in *.
+  - depelim ev.
+    depelim ev.
+    constructor.
+Qed.
+
+Lemma eval_tApp_heads_deriv {Σ hd hd' hdv arg v}
+      (ev_hd : Σ ⊢ hd ▷ hdv)
+      (ev_hd' : Σ ⊢ hd' ▷ hdv)
+      (ev_app : Σ ⊢ tApp hd arg ▷ v) :
+  ∑ (ev_app' : Σ ⊢ tApp hd' arg ▷ v),
+    (deriv_length ev_app + deriv_length ev_hd' = deriv_length ev_app' + deriv_length ev_hd)%nat.
+Proof.
+  depind ev_app.
+  - pose proof (eval_deterministic ev_hd ev_app1) as ->.
+    pose proof (deriv_lengths_eq ev_hd ev_app1).
+    unshelve eexists _; [now eapply eval_box|].
+    cbn; lia.
+  - pose proof (eval_deterministic ev_hd ev_app1) as ->.
+    pose proof (deriv_lengths_eq ev_hd ev_app1).
+    unshelve eexists _; [now eapply eval_beta|].
+    cbn; lia.
+  - pose proof (eval_deterministic ev_hd ev_app1) as ->.
+    pose proof (deriv_lengths_eq ev_hd ev_app1).
+    unshelve eexists _; [now eapply eval_fix|].
+    cbn; lia.
+  - pose proof (eval_deterministic ev_hd ev_app1) as ->.
+    pose proof (deriv_lengths_eq ev_hd ev_app1).
+    unshelve eexists _; [now eapply eval_fix_value|].
+    cbn; lia.
+  - pose proof (eval_deterministic ev_hd ev_app1) as ->.
+    pose proof (deriv_lengths_eq ev_hd ev_app1).
+    unshelve eexists _; [now eapply eval_app_cong|].
+    cbn; lia.
+  - easy.
+Qed.
+
+Lemma eval_mkApps_heads_deriv {Σ hd hd' hdv args v}
+      (ev_hd : Σ ⊢ hd ▷ hdv)
+      (ev_hd' : Σ ⊢ hd' ▷ hdv)
+      (ev_apps : Σ ⊢ mkApps hd args ▷ v) :
+  ∑ (ev_apps' : Σ ⊢ mkApps hd' args ▷ v),
+  (deriv_length ev_apps + deriv_length ev_hd' = deriv_length ev_apps' + deriv_length ev_hd)%nat.
+Proof.
+  revert hd hd' hdv v ev_hd ev_hd' ev_apps.
+  induction args using MCList.rev_ind; intros; cbn in *.
+  - pose proof (eval_deterministic ev_hd ev_apps) as ->.
+    exists ev_hd'.
+    now pose proof (deriv_lengths_eq ev_hd ev_apps).
+  - revert ev_apps; rewrite !mkApps_app; intros.
+    cbn in *.
+    eapply eval_tApp_head in ev_apps as ev_apps'.
+    destruct ev_apps' as (? & ev_apps').
+    specialize (IHargs _ _ _ _ ev_hd ev_hd' ev_apps') as (ev_apps'' & ?).
+    pose proof (eval_tApp_heads_deriv ev_apps' ev_apps'' ev_apps) as (ev & ?).
+    exists ev.
+    lia.
 Qed.

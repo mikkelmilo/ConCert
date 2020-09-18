@@ -1,4 +1,3 @@
-SED = `which gsed || which sed`
 EXTRA_DIR:=extra
 DOCS_DIR:=docs
 COQDOCFLAGS:= \
@@ -7,24 +6,17 @@ COQDOCFLAGS:= \
   --with-header $(EXTRA_DIR)/header.html --with-footer $(EXTRA_DIR)/footer.html
 export COQDOCFLAGS
 COQMAKEFILE:=CoqMakefile
-PLUGINMAKEFILE:=CoqMakefile.plugin
 COQ_PROJ:=_CoqProject
-PLUGIN_PROJ:=_PluginProject
+ELM_DIR:=./extraction/examples/elm-extract/
+LIQ_DIR:=./extraction/examples/liquidity-extract/tests
 
-default: code # plugin
 
-all: code html # plugin
+default: code process-extraction
 
-plugin: $(PLUGINMAKEFILE)
-	$(MAKE) -f $(PLUGINMAKEFILE)
-
-cleanplugin: $(PLUGINMAKEFILE)
-	@$(MAKE) -f $(PLUGINMAKEFILE) clean
-	rm -f $(PLUGINMAKEFILE)
+all: code html
 
 code: $(COQMAKEFILE)
 	$(MAKE) -f $(COQMAKEFILE)
-#	./clean_extraction.sh
 
 clean: $(COQMAKEFILE)
 	@$(MAKE) -f $(COQMAKEFILE) $@
@@ -39,12 +31,19 @@ html: $(COQMAKEFILE)
 $(COQMAKEFILE): $(COQ_PROJ)
 		coq_makefile -f $(COQ_PROJ) -o $@
 
-$(PLUGINMAKEFILE): $(PLUGIN_PROJ)
-		coq_makefile -f $(PLUGIN_PROJ) -o $@ $(DEPS)
-		$(SED) -i -e s/coqdeps/coqdeps.plugin/g $(PLUGINMAKEFILE)
-
 %: $(COQMAKEFILE) force
 	@$(MAKE) -f $(COQMAKEFILE) $@
 force $(COQ_PROJ): ;
+
+test-extraction:
+	cd $(ELM_DIR); elm-test
+	$(foreach file, $(wildcard $(LIQ_DIR)/*.liq), liquidity $(file);)
+
+process-extraction: code
+	./process-extraction.sh
+
+clean-extraction:
+	rm ./extraction/examples/elm-extract/*.elm.out
+	rm ./extraction/examples/liquidity-extract/*.liq.out
 
 .PHONY: clean all default force

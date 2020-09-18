@@ -34,6 +34,7 @@ From MetaCoq.SafeChecker Require Import PCUICSafeRetyping.
 From MetaCoq.Template Require Import config.
 From MetaCoq.Template Require Import monad_utils.
 From MetaCoq.Template Require Import utils.
+From MetaCoq.Template Require TemplateMonad.
 
 Import PCUICEnvTyping.
 Import PCUICLookup.
@@ -505,7 +506,7 @@ erase_type Γ erΓ t wat tvars with inspect (reduce_term redβιζ Σ wfΣ Γ t 
       | et_view_sort _ := ret (tvars, TBox);
 
       | et_view_prod na A B with flag_of_type Γ A _ := {
-          (* For logical things just box and proceed *)
+          (* For logical things, we add a type variable if it's an arity *)
         | Checked {| is_logical := true |} :=
           '(tvars, bt) <- erase_type (Γ,, vass na A) (RelOther :: erΓ)%vector B _ tvars;;
           ret (tvars, TArr TBox bt);
@@ -693,17 +694,55 @@ Import ExAst.
 Program Definition erase_constant_decl
           (cst : P.constant_body)
           (wt : ∥on_constant_decl (lift_typing typing) Σ cst∥)
-          : result constant_body erase_constant_decl_error :=
-  et <- map_error EraseTypeError (erase_type [] []%vector (P.cst_type cst) _ []);;
-  eb <- match P.cst_body cst with
-        | Some body =>
-          match SafeErasureFunction.erase Σ wfextΣ [] body _ with
-          | TypeError te => Err (EraseBodyError te)
-          | Checked eb => ret (Some eb)
-          end
+  : result (constant_body + (list name × box_type)) erase_constant_decl_error :=
+  flg <- wrap_typing_result (flag_of_type [] (P.cst_type cst) _) EraseBodyError ;;
+  match is_sort flg with
+  | left ics => (* erase as a type alias  *)
+    match P.cst_body cst with
+    | Some body =>
+      ety <- map_error EraseTypeError (erase_type [] []%vector body _ []);;
+      ret (inr ety)
+    | None =>
+      Err (EraseBodyError (Msg "Type alias without a body"))
+    end
+  | right _ => (* proceed as usual *)
+    et <- map_error EraseTypeError (erase_type [] []%vector (P.cst_type cst) _ []);;
+    eb <- match P.cst_body cst with
+         | Some body =>
+           match SafeErasureFunction.erase Σ wfextΣ [] body _ with
+           | TypeError te => Err (EraseBodyError te)
+           | Checked eb => ret (Some eb)
+           end
         | None => ret None
         end;;
-  ret {| cst_type := et; cst_body := eb |}.
+    ret (inl {| cst_type := et; cst_body := eb |})
+  end.
+Next Obligation.
+  sq.
+  unfold on_constant_decl in wt.
+  destruct (P.cst_body cst).
+  - cbn in wt.
+    eapply validity_term; [easy|exact wt].
+  - cbn in wt.
+    destruct wt as (s & ?).
+    right.
+    now exists s.
+Qed.
+Next Obligation.
+  destruct ics as [u Hred].
+  destruct Hred as [Hred].
+  sq.
+  unfold on_constant_decl in wt.
+  destruct (P.cst_body cst).
+  - cbn in wt.
+    inversion Heq_anonymous;subst.
+    right. exists u.
+    eapply type_reduction;eauto.
+  - cbn in wt.
+    destruct wt as (s & ?).
+    right.
+    now exists s.
+Qed.
 Next Obligation.
   sq.
   unfold on_constant_decl in wt.
@@ -838,20 +877,19 @@ Program Definition erase_ind_body
 
   let '(Γ; erΓ) := arities_contexts mind (P.ind_bodies mib) in
 
+  let ind_params := firstn (P.ind_npars mib) oib_tvars in
+  (* Type erasure will only produce type vars for non-logical sorts *)
+  let ind_ctor_tvars :=
+      filter (fun t => tvar_is_sort t && negb (tvar_is_logical t)) ind_params in
   (* We map type vars in constructors to type vars in the inductive parameters.
-     Thus, we only allow the constructor this many type vars. *)
-  let num_tvars_in_params :=
-      List.length
-        (filter
-           (fun tvar => negb (tvar_is_logical tvar) && tvar_is_sort tvar)
-           (firstn (P.ind_npars mib) oib_tvars)) in
-
+     Thus, we only allow the constructor this many type vars *)
+  let num_ctor_tvars := List.length ind_ctor_tvars in
   let erase_ind_ctor (p : (ident × P.term) × nat) (is_in : In p (P.ind_ctors oib)) :=
       let '((name, t), _) := p in
       '(ctor_tvars, bt) <- map_error (EraseCtorError name)
                                      (erase_type Γ erΓ t _ []);;
 
-      (if (#|ctor_tvars| <=? num_tvars_in_params)%nat then
+      (if (#|ctor_tvars| <=? num_ctor_tvars)%nat then
          ret tt
        else
          Err (CtorUnmappedTypeVariables name));;
@@ -863,6 +901,7 @@ Program Definition erase_ind_body
 
   ret {| ind_name := P.ind_name oib;
          ind_type_vars := oib_tvars;
+         ind_ctor_type_vars := ind_ctor_tvars;
          ind_ctors := ctors;
          ind_projs := [] (* todo *) |}.
 Next Obligation.
@@ -957,40 +996,51 @@ Definition string_of_erase_global_decl_error (e : erase_global_decl_error) : str
 Program Definition erase_global_decl
         (Σext : P.global_env_ext) (wfΣext : ∥wf_ext Σext∥)
         (kn : kername)
+        (ignore_on_print : bool)
         (decl : P.global_decl)
         (wt : ∥on_global_decl (lift_typing typing) Σext kn decl∥)
   : result global_decl erase_global_decl_error :=
   match decl with
   | P.ConstantDecl cst =>
-    cst <- map_error (ErrConstant Σext kn)
-                     (erase_constant_decl Σext _ cst _);;
-    ret (ConstantDecl cst)
+    cst_or_ty_alias <- map_error (ErrConstant Σext kn)
+                                (erase_constant_decl Σext _ cst _);;
+    match cst_or_ty_alias with
+    | inl cst => ret (ConstantDecl cst)
+    | inr ta => ret (TypeAliasDecl ta)
+    end
   | P.InductiveDecl mib =>
     ind <- map_error (ErrInductive Σext kn)
                      (erase_ind Σext _ kn mib _);;
-    ret (InductiveDecl ind)
+    ret (InductiveDecl ignore_on_print ind)
   end.
 
-Definition contains (kn : kername) :=
-  List.existsb (eq_kername kn).
-
-(* Erase all unignored global declarations *)
-Program Fixpoint erase_global_decls (Σ : P.global_env) (wfΣ : ∥wf Σ∥)
+(* Erase all declarations for which [f] returns [true] *)
+Program Fixpoint general_erase_global_decls (Σ : P.global_env) (wfΣ : ∥wf Σ∥)
+        (f : kername -> bool)
   : result global_env erase_global_decl_error :=
   match Σ with
   | [] => ret []
   | (kn, decl) :: Σ =>
-    Σer <- erase_global_decls Σ _;;
-    if contains kn ignored then
+    Σer <- general_erase_global_decls Σ _ f;;
+    if f kn then
       ret Σer
     else
       let Σext := (Σ, universes_decl_of_decl decl) in
-      decl <- erase_global_decl Σext _ kn decl _;;
+      decl <- erase_global_decl Σext _ kn false decl _;;
       ret ((kn, decl) :: Σer)
   end.
 Next Obligation. now sq; inversion wfΣ. Qed.
 Next Obligation. now sq; inversion wfΣ. Qed.
 Next Obligation. now sq; inversion wfΣ. Qed.
+
+
+Definition contains (kn : kername) :=
+  List.existsb (eq_kername kn).
+
+(* Erase all unignored global declarations *)
+Definition erase_global_decls (Σ : P.global_env) (wfΣ : ∥wf Σ∥)
+  : result global_env erase_global_decl_error :=
+  general_erase_global_decls Σ wfΣ (fun kn => contains kn ignored).
 
 Definition add_seen (n : kername) (seen : list kername) : list kername :=
   if existsb (eq_kername n) seen then
@@ -1029,6 +1079,7 @@ Fixpoint box_type_deps (seen : list kername) (t : box_type) : list kername :=
   | TConst n => add_seen n seen
   end.
 
+
 Definition decl_deps (seen : list kername) (decl : global_decl) : list kername :=
   match decl with
   | ConstantDecl body =>
@@ -1038,14 +1089,67 @@ Definition decl_deps (seen : list kername) (decl : global_decl) : list kername :
         | None => seen
         end in
     box_type_deps seen (cst_type body).2
-  | InductiveDecl mib =>
+  | InductiveDecl _ mib =>
     let one_inductive_body_deps seen oib :=
         let seen := fold_left box_type_deps
                               (flat_map snd (ind_ctors oib))
                               seen in
         fold_left box_type_deps (map snd (ind_projs oib)) seen in
     fold_left one_inductive_body_deps (ind_bodies mib) seen
+  | TypeAliasDecl (nms, ty) => box_type_deps seen ty
   end.
+
+Definition is_inductive_decl (d : P.global_decl) : bool :=
+  match d with
+  | P.ConstantDecl _ => false
+  | P.InductiveDecl _ => true
+  end.
+
+Definition Tis_inductive_decl (d : Ast.global_decl) : bool :=
+  match d with
+  | Ast.ConstantDecl _ => false
+  | Ast.InductiveDecl _ => true
+  end.
+
+(** Turn a global declaration into an axiom, if it's a constant, by removing the constant's body *)
+Definition decl_to_axiom (decl : global_decl) : global_decl :=
+  match decl with
+  | ConstantDecl cst =>
+    ConstantDecl {| cst_type := cst.(cst_type);
+                    cst_body := None |}
+  | TypeAliasDecl ty => (* NOTE: type aliases become axioms as well *)
+    ConstantDecl {| cst_type := ty;
+                    cst_body := None |}
+
+  | _ => decl
+  end.
+
+
+(* Erase the global declarations by the specified names and
+   their non-erased dependencies recursively. Ignore dependencies for which [ignore] returnes [true] *)
+Program Fixpoint general_erase_global_decls_deps_recursive
+        (Σ : P.global_env) (wfΣ : ∥wf Σ∥)
+        (ignore : kername -> bool)
+        (include : list kername)
+  : result global_env erase_global_decl_error :=
+  match Σ with
+  | [] => ret []
+  | (kn, decl) :: Σ =>
+    let Σext := (Σ, universes_decl_of_decl decl) in
+    if contains kn include && negb (ignore kn)  then
+      decl <- erase_global_decl Σext _ kn false decl _;;
+      Σer <- general_erase_global_decls_deps_recursive Σ _ ignore (decl_deps include decl);;
+      ret ((kn, decl) :: Σer)
+    else
+      if contains kn include && ignore kn then
+      (* NOTE: if the inductive declarations is ignored, we still add it to have enough info for printing [match] and inductives that depend on it. But we ignore its dependencies and ignore the declaration itself on printing *)
+        decl <- erase_global_decl Σext _ kn true decl _;;
+        let decl := decl_to_axiom decl in
+        Σer <- general_erase_global_decls_deps_recursive Σ _ ignore include ;;
+        ret ((kn, decl) :: Σer)
+      else general_erase_global_decls_deps_recursive Σ _ ignore include
+  end.
+Solve All Obligations with cbn;intros;subst; now sq; inversion wfΣ.
 
 (* Erase the unignored global declarations by the specified names and
    their non-erased dependencies recursively. *)
@@ -1053,21 +1157,64 @@ Program Fixpoint erase_global_decls_deps_recursive
         (Σ : P.global_env) (wfΣ : ∥wf Σ∥)
         (include : list kername)
   : result global_env erase_global_decl_error :=
-  match Σ with
-  | [] => ret []
-  | (kn, decl) :: Σ =>
-    if contains kn include && negb (contains kn ignored)  then
-      let Σext := (Σ, universes_decl_of_decl decl) in
-      decl <- erase_global_decl Σext _ kn decl _;;
-      Σer <- erase_global_decls_deps_recursive Σ _ (decl_deps include decl);;
-      ret ((kn, decl) :: Σer)
-    else
-      erase_global_decls_deps_recursive Σ _ include
+  general_erase_global_decls_deps_recursive Σ wfΣ (fun kn => contains kn ignored) include.
+
+Fixpoint Tterm_deps (seen : list kername) (t : Ast.term) : list kername :=
+  match t with
+  | Ast.tRel _
+  | Ast.tVar _
+  | Ast.tSort _ => seen
+  | Ast.tCast t1 _ t2 => fold_left Tterm_deps [t1;t2] seen
+  | Ast.tInd ind _ => add_seen (inductive_mind ind) seen
+  | Ast.tProd _ ty1 ty2 => fold_left Tterm_deps [ty1;ty2] seen
+  | Ast.tEvar _ ts => fold_left Tterm_deps ts seen
+  | Ast.tLambda _ ty t => Tterm_deps seen t
+  | Ast.tLetIn _ ty t1 t2 => fold_left Tterm_deps [ty;t1;t2] seen
+  | Ast.tApp t1 t2 => fold_left Tterm_deps (t1 :: t2) seen
+  | Ast.tConst n _ => add_seen n seen
+  | Ast.tConstruct ind _ _ => add_seen (inductive_mind ind) seen
+  | Ast.tCase (ind, _) ty t brs =>
+    let seen := Tterm_deps (add_seen (inductive_mind ind) seen) t in
+    fold_left (fun seen '(_, t) => Tterm_deps seen t) brs seen
+  | Ast.tProj (ind, _, _) t => Tterm_deps (add_seen (inductive_mind ind) seen) t
+  | Ast.tFix defs _
+  | Ast.tCoFix defs _ =>
+    fold_left (fun seen d => Tterm_deps seen (BasicAst.dbody d)) defs seen
   end.
-Next Obligation. now sq; inversion wfΣ. Qed.
-Next Obligation. now sq; inversion wfΣ. Qed.
-Next Obligation. now sq; inversion wfΣ. Qed.
-Next Obligation. now sq; inversion wfΣ. Qed.
+
+Definition Tdecl_deps (seen : list kername) (decl : Ast.global_decl) : list kername :=
+  match decl with
+  | Ast.ConstantDecl body =>
+    let seen :=
+        match Ast.cst_body body with
+        | Some body => Tterm_deps seen body
+        | None => seen
+        end in
+    Tterm_deps seen (Ast.cst_type body)
+  | Ast.InductiveDecl mib =>
+    let one_inductive_body_deps seen oib :=
+        let seen := fold_left Tterm_deps
+                              (map (snd ∘ fst) (Ast.ind_ctors oib))
+                              seen in
+        fold_left Tterm_deps (map snd (Ast.ind_projs oib)) seen in
+    fold_left one_inductive_body_deps (Ast.ind_bodies mib) seen
+  end.
+
+
+Import TemplateMonad.
+
+Program Fixpoint Tglobal_decls_deps_recursive
+        (Σ : Ast.global_env) (include : list kername)
+  : Ast.global_env :=
+  match Σ with
+  | [] => []
+  | (kn, decl) :: Σ =>
+    if contains kn include && negb (contains kn ignored) then
+        (kn, decl) :: Tglobal_decls_deps_recursive Σ (Tdecl_deps include decl)
+    else if Tis_inductive_decl decl && contains kn include && contains kn ignored then
+           (kn, decl) :: Tglobal_decls_deps_recursive Σ include
+         else Tglobal_decls_deps_recursive Σ include
+  end.
 
 End EraseEnv.
 

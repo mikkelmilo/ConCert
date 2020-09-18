@@ -1,4 +1,5 @@
 From ConCert.Extraction Require Import Erasure.
+From ConCert.Extraction Require Import Optimize.
 From ConCert.Extraction Require Import ExAst.
 From ConCert.Extraction Require Import ResultMonad.
 From ConCert.Extraction Require Import StringExtra.
@@ -74,6 +75,10 @@ Check eq_refl : ltac:(let x := eval vm_compute in (flag_of_type_program ex4) in 
 MetaCoq Quote Recursively Definition ex5 := (Prop).
 Check eq_refl : ltac:(let x := eval vm_compute in (flag_of_type_program ex5) in exact x) =
                 Ok {| is_logical := true; is_sort := true; is_arity := true |}.
+
+MetaCoq Quote Recursively Definition ex5' := (forall n m: nat, Prop).
+Check eq_refl : ltac:(let x := eval vm_compute in (flag_of_type_program ex5') in exact x) =
+                Ok {| is_logical := true; is_sort := false; is_arity := true |}.
 
 MetaCoq Quote Recursively Definition ex6 := (Prop -> Type).
 Check eq_refl : ltac:(let x := eval vm_compute in (flag_of_type_program ex6) in exact x) =
@@ -330,7 +335,7 @@ Definition print_one_inductive_body
   let print_ctor_type bt :=
       " " ++ parens
           (negb (parenthesize_ctor_type bt))
-          (print_box_type Σ (map tvar_name (ExAst.ind_type_vars oib)) bt) in
+          (print_box_type Σ (map tvar_name (ExAst.ind_ctor_type_vars oib)) bt) in
 
   let print_ctor '(ctor_name, ctor_types) :=
       nl ++ "| " ++ ctor_name ++
@@ -445,13 +450,55 @@ Inductive IndexedList : Type -> Type :=
 | icons : forall T, T -> IndexedList T -> IndexedList T.
 
 MetaCoq Quote Recursively Definition ex9 := IndexedList.
-Compute erase_and_print_ind_prog ex9.
 Check eq_refl : ltac:(let x := eval vm_compute in (erase_and_print_ind_prog ex9) in exact x) =
                 Err (EraseIndBodyError "IndexedList" (CtorUnmappedTypeVariables "inil")).
 
 MetaCoq Quote Recursively Definition ex10 := Monad.
-Compute erase_and_print_ind_prog ex10.
 Check eq_refl : ltac:(let x := eval vm_compute in (erase_and_print_ind_prog ex10) in exact x) =
                 Err (EraseIndBodyError "Monad" (EraseCtorError "Build_Monad" NotPrenex)).
+
+Inductive ManyParamsInd (A : Type) (P : Prop) (Q : Prop) (B : Type) :=
+  MPIConstr : P -> A -> B -> ManyParamsInd A P Q B.
+
+MetaCoq Quote Recursively Definition ex11 := ManyParamsInd.
+
+Example ManyParamsInd_test :
+  erase_and_print_ind_prog ex11 =
+  Ok <$ "data ManyParamsInd A P Q B";
+        "| MPIConstr □ □ □ □ □ A B" $>.
+Proof. reflexivity. Qed.
+
+(* [Q] is non-arity parameter *)
+Inductive ManyParamsIndNonArity (A : Type) (P : Prop) (Q : True) (B : Type) :=
+  MPINAConstr1 : P -> A -> B -> ManyParamsIndNonArity A P Q B
+| MPINAConstr2 : P -> list P -> A*B -> ManyParamsIndNonArity A P Q B.
+
+MetaCoq Quote Recursively Definition ex12 := ManyParamsIndNonArity.
+
+Example ManyParamsIndNonArity_test:
+  erase_and_print_ind_prog ex12 =
+  Ok <$ "data ManyParamsIndNonArity A P Q B";
+        "| MPINAConstr1 □ □ □ □ □ A B";
+        "| MPINAConstr2 □ □ □ □ □ (list □) (prod A B)" $>.
+Proof. vm_compute. reflexivity. Qed.
+
+Inductive PropTypeVarInCtor :=
+  ex13_ctor : Prop -> PropTypeVarInCtor.
+MetaCoq Quote Recursively Definition ex13 := PropTypeVarInCtor.
+
+Example PropTypeVarInCtor_test :
+  erase_and_print_ind_prog ex13 =
+  Ok <$ "data PropTypeVarInCtor";
+        "| ex13_ctor □" $>.
+Proof. vm_compute. reflexivity. Qed.
+
+Inductive IndWithIndex : nat -> Type :=
+| ex14_ctor (T : Type) : IndWithIndex 0.
+MetaCoq Quote Recursively Definition ex14 := IndWithIndex.
+
+Example IndWithIndex_test :
+  erase_and_print_ind_prog ex14 =
+  Err (EraseIndBodyError "IndWithIndex" (CtorUnmappedTypeVariables "ex14_ctor")).
+Proof. vm_compute. reflexivity. Qed.
 
 End erase_ind_tests.
