@@ -104,13 +104,13 @@ Definition add_operator_all owner operator := {|
   op_param_tokens := all_tokens;
 |}.
 
+(* empty chain *)
+Definition chain0 : ChainBuilder :=
+  ResultMonad.unpack_result (TraceGens.add_block builder_initial []).
 (* Setup a chain with fa2 contract, dexter contract, and exploit contract deployed.
    Also adds some tokens to person_1 and dexter contract, and adds some operators on the fa2 contract *)
-Definition chain0 : ChainBuilder :=
-  unpack_result (TraceGens.add_block builder_initial []).
-
 Definition chain1 : ChainBuilder :=
-  unpack_result (TraceGens.add_block chain0
+  ResultMonad.unpack_result (TraceGens.add_block chain0
   [
     build_act creator (act_transfer person_1 10) ;
     build_act creator deploy_fa2token ;
@@ -118,8 +118,11 @@ Definition chain1 : ChainBuilder :=
     build_act creator deploy_exploit ;
     build_act person_1 (act_call fa2_caddr 10%Z (serialize _ _ (msg_create_tokens 0%N))) ;
     build_act creator (act_call dexter_caddr 10%Z (serialize _ _ (dexter_other_msg (add_to_tokens_reserve 0%N)))) ;
-    build_act person_1 (act_call fa2_caddr 0%Z  (serialize _ _ (msg_update_operators [add_operator (add_operator_all person_1 exploit_caddr);
-                                                                                      add_operator (add_operator_all person_1 dexter_caddr)])))
+    build_act person_1 (act_call fa2_caddr 0%Z  (serialize _ _ (
+      msg_update_operators [
+        add_operator (add_operator_all person_1 exploit_caddr);
+        add_operator (add_operator_all person_1 dexter_caddr)
+      ])))
   ]).
 
 Definition dexter_state env := get_contract_state Dexter.State env dexter_caddr.
@@ -139,6 +142,8 @@ Module TestInfo <: DexterTestsInfo.
 End TestInfo.
 Module MG := DexterGens.DexterGens TestInfo. Import MG.
 
+(* Helper function that generates a call to the exploit contract to initiate a dexter token exchange
+   on behalf of the caller. *)
 Definition call_dexter owner_addr :=
   let dummy_descriptor := {|
     transfer_descr_fa2 := fa2_caddr;
@@ -162,12 +167,15 @@ Definition person_1_initial_balance : Amount := account_balance chain1 person_1.
 
 Definition dexter_liquidity : Amount := account_balance chain1 dexter_caddr.
 
+(* Helper function to retrieve an account's (dexter) token balance *)
 Definition account_tokens (env : Environment) (account : Address) : N :=
   with_default 0%N (
     do state_fa2 <- token_state env ;
     do assets <- FMap.find 0%N state_fa2.(assets) ;
     FMap.find account assets.(balances)).
 
+(* Initially, the dexter contract has 1000 tokens, and so does person_1.
+   The dexter contract has 30 on-chain currency, and person_1 has 0 *)
 (* Compute (account_tokens chain1 dexter_caddr). *)
 (* 1000%N *)
 (* Compute (account_tokens chain1 person_1). *)
@@ -177,22 +185,30 @@ Definition account_tokens (env : Environment) (account : Address) : N :=
 (* Compute dexter_liquidity. *)
 (* 30%Z *)
 
-(* This property asserts that the token reserve of the dexter contract is consistent
-   with how much money has been exchanged for tokens, with respect to the conversion function 'getInputPrice' *)
+(* --- PATH-DEPENDENCE --- 
+  This property is a consequence of the *path-dependence* property, 
+  and asserts that the token reserve of the dexter contract is consistent
+  with how much money has been exchanged for tokens, with respect to the conversion function 'getInputPrice'.
+  "Consistency" in this case means that given a sequence of trades for some account, the total tokens obtained
+  by this sequence of trades should be less than if the trades were combined into a single trade, i.e.
+  *splitting trades should always be more expensive*  
+*)
 Open Scope Z_scope.
-Definition tokens_to_asset_correct_P_opt (env : Environment) : option Checker :=
+Definition tokens_to_asset_correct_P_opt (env : Environment) (account : Address) : option Checker :=
   do state_dexter <- dexter_state env;
-  let person_1_balance := account_balance env person_1 in
+  let person_1_balance := account_balance env account in
   let dexter_balance := account_balance env dexter_caddr in
   let dexter_initial_balance := account_balance chain1 dexter_caddr in
   let dexter_initial_token_reserve := Z.of_N (account_tokens chain1 dexter_caddr) in
   let dexter_current_token_reserve := Z.of_N (account_tokens env dexter_caddr) in
+  (* We assume only the given account has made exchanges in this time period. This assumption holds for these tests. *)
   let tokens_received := dexter_current_token_reserve - dexter_initial_token_reserve in
+  (* Calculate token exchange price if only a single exchange was made *)
   let expected_currency_sold := getInputPrice tokens_received dexter_initial_token_reserve dexter_initial_balance in
   let expected_dexter_balance := dexter_initial_balance - expected_currency_sold in
   Some (
     whenFail (
-      "dexter balance was " ++ show dexter_balance ++ " while it was expected to be at least " ++ show expected_dexter_balance ++ nl ++
+      "dexter balance was " ++ show dexter_balance ++ " while it was expected to be less than " ++ show expected_dexter_balance ++ nl ++
       "person_1 balance: " ++ show person_1_balance ++ nl ++
       "person_1 tokens: " ++ show (account_tokens env person_1) ++ nl ++
       "dexter balance: " ++ show dexter_balance ++ nl ++
@@ -202,14 +218,16 @@ Definition tokens_to_asset_correct_P_opt (env : Environment) : option Checker :=
     (checker (expected_dexter_balance <? dexter_balance))
   ).
 
-Definition tokens_to_asset_correct_P env :=
-  match tokens_to_asset_correct_P_opt env with
+Definition tokens_to_asset_correct_P acc env :=
+  match tokens_to_asset_correct_P_opt env acc with
   | Some p => p
   | None => false ==> true
   end.
 
+(* We specialize the property to the person_1 account *)
 Definition tokens_to_asset_correct :=
-  forAllChainState 1 chain1 (gExploitChainTraceList 1) tokens_to_asset_correct_P.
+  forAllChainState 1 chain1 (gExploitChainTraceList 1) (tokens_to_asset_correct_P person_1).
+
 (* QuickChick tokens_to_asset_correct. *)
 
 (* Illustration of how the reentrancy attack can give the caller more money with the same amount of tokens.
