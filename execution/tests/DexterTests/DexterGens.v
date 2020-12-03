@@ -37,21 +37,20 @@ Definition gTokensToExchange (balance : N) : G (option N) :=
     amount <- choose (0%N, balance) ;;
     returnGenSome amount.
 
-Definition gTokenExchange  (state : FA2Token.State) : G (option (Address * Dexter.Msg)):=
+Definition gTokenExchange (state : FA2Token.State) (caller : Address) : G (option Dexter.Msg):=
   let has_balance p :=
     let ledger := snd p in
     0 <? FMap.size ledger.(balances) in
   '(tokenid, ledger) <-  (sampleFMapOpt_filter state.(assets) has_balance) ;;
-  let has_tokens p := N.ltb 0 (snd p) in
-  '(addr, nr_tokens) <- sampleFMapOpt_filter ledger.(balances) has_tokens ;;
-  tokens_to_exchange <- gTokensToExchange nr_tokens ;;
+  let caller_tokens : N := Extras.with_default 0%N (FMap.find caller ledger.(balances)) in
+  tokens_to_exchange <- gTokensToExchange caller_tokens ;;
   let exchange_msg := {|
-    exchange_owner := addr;
+    exchange_owner := caller;
     exchange_token_id := tokenid;
     tokens_sold := tokens_to_exchange;
     callback_addr := exploit_contract_addr;
   |} in
-  returnGenSome (addr, other_msg (Dexter.tokens_to_asset exchange_msg))
+  returnGenSome (other_msg (Dexter.tokens_to_asset exchange_msg))
 .
 
 Definition liftOptGen {A : Type} (g : G A) : GOpt A :=
@@ -78,7 +77,7 @@ Definition gDexterAction (env : Environment) : GOpt Action :=
         mk_call caller amount msg
     ) ;
     (2, caller <- gAccountAddrWithout [fa2_contract_addr; dexter_contract_addr] ;;
-        '(_, msg) <- gTokenExchange fa2_state ;;
+        msg <- gTokenExchange fa2_state caller ;;
         mk_call caller 0%Z msg
     )
   ].

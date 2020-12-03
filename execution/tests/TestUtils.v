@@ -16,7 +16,9 @@ Require Import Containers.
 
 Global Definition AddrSize := (2^8)%N.
 Global Instance LocalChainBase : ChainBase := LocalChainBase AddrSize.
-Global Instance ChainBuilder : ChainBuilderType := LocalChainBuilderDepthFirst AddrSize.
+Global Instance ChainBuilderDF : ChainBuilderType := LocalChainBuilderDepthFirst AddrSize.
+Existing Instance ChainBuilderDF | 2.
+
 Notation "f 'o' g" := (compose f g) (at level 50).
 
 Definition creator : Address :=

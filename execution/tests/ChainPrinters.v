@@ -185,7 +185,7 @@ Instance showChainTraceI `{Show (@Action Base)} {from to} : Show (ChainTrace fro
     showChainTrace
 |}.
 
-Instance showLCB `{Show (@Action Base)} : Show ChainBuilder :=
+Instance showLCB `{Show (@Action Base)} : Show ChainBuilderDF :=
 {|
   show cb := "Chain{| " ++ nl
              ++ show cb.(lcb_trace)

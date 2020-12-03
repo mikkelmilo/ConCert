@@ -17,6 +17,10 @@ Import ListNotations.
 Import RecordSetNotations.
 Close Scope address_scope.
 
+
+(* Use depth-first execution for these tests *)
+Definition ChainBuilder := ChainBuilderDF.
+
 (** example policies *)
 
 (* the policy which allows only token owners to transfer their own tokens. *)

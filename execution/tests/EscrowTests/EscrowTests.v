@@ -23,7 +23,10 @@ Import RecordSetNotations.
 Close Scope string_scope. 
 
 Section TestSetup.
-  (* Fix seller and buyer *)
+  (* Use depth-first execution for these tests *)
+  Definition ChainBuilder := ChainBuilderDF.
+
+(* Fix seller and buyer *)
   Definition seller := creator.
   Definition buyer := person_1.
 

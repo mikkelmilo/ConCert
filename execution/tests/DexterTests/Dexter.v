@@ -170,7 +170,8 @@ Definition receive (chain : Chain)
   | Some (receive_balance_of_param responses) => receive_balance_response responses caddr dexter_balance state
   | Some (other_msg (tokens_to_asset params)) => begin_exchange_tokens_to_assets sender params caddr state
   | Some (other_msg (add_to_tokens_reserve tokenid)) => create_tokens tokenid amount state
-  | _ => None
+  (* Ignore any other type of call to this contract *)
+  | _ => Some (state, [])
   end.
 
 Definition init (chain : Chain)

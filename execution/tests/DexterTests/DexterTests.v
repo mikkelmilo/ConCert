@@ -17,6 +17,9 @@ From Coq Require Import Morphisms.
 Import ListNotations.
 Import RecordSetNotations.
 
+(* Use depth-first execution for these tests *)
+Definition ChainBuilder := ChainBuilderDF.
+
 (* the policy which allows both owners and operators to transfer tokens. *)
 Definition policy_all : permissions_descriptor := {|
   descr_self := self_transfer_permitted;

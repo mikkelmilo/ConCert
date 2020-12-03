@@ -21,6 +21,9 @@ Import LocalBlockchain.
 
 (* -------------------------- Tests of the Buggy iToken Implementation -------------------------- *)
 
+(* Use depth-first execution for these tests *)
+Definition ChainBuilder := ChainBuilderDF.
+
 (* F# style piping notation *)
 Notation "f <| x" := (f x) (at level 91, left associativity, only parsing).
 (* i.e. f <| x <| y = (f <| x) <| y, and means (f x) y *)

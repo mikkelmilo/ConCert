@@ -19,9 +19,9 @@ Require Import Containers.
 Notation "f 'o' g" := (compose f g) (at level 50).
 Definition LocalChainBase : ChainBase := TestUtils.LocalChainBase.
 
-Definition chain1 : ChainBuilder := builder_initial.
-Definition chain2 : ChainBuilder := unpack_result (add_block chain1 []).
-Definition chain3 : ChainBuilder := unpack_result
+Definition chain1 : ChainBuilderDF := builder_initial.
+Definition chain2 : ChainBuilderDF := unpack_result (add_block chain1 []).
+Definition chain3 : ChainBuilderDF := unpack_result
   (add_block chain2 [build_act creator (act_transfer person_1 10)]).
 
 Definition setup_rules :=
@@ -32,7 +32,7 @@ Definition setup_rules :=
 Definition setup := Congress.build_setup setup_rules.
 Definition deploy_congress : ActionBody :=
   create_deployment 5 Congress.contract setup.
-Definition chain4 : ChainBuilder :=
+Definition chain4 : ChainBuilderDF :=
   unpack_result (add_block chain3 [build_act person_1 deploy_congress]).
 Definition congress_1 : Address :=
   match outgoing_txs (builder_trace chain4) person_1 with
@@ -53,13 +53,13 @@ end.
   (* person_1 adds person_1 and person_2 as members of congress *)
 Definition add_person p :=
   congress_ifc.(send) 0 (Some (add_member p)).
-Definition chain5 : ChainBuilder :=
+Definition chain5 : ChainBuilderDF :=
   let acts := [build_act person_1 (add_person person_1);
                 build_act person_1 (add_person person_2)] in
   unpack_result (add_block chain4 acts).
 Definition create_proposal_call :=
   congress_ifc.(send) 0 (Some (create_proposal [cact_transfer person_3 3])).
-Definition chain6 : ChainBuilder :=
+Definition chain6 : ChainBuilderDF :=
   unpack_result (add_block chain5 [build_act person_1 create_proposal_call]).
 
 Definition congress_chain := chain5.
@@ -146,7 +146,7 @@ Definition state_proposals_proposed_in_valid (cs : ChainState) :=
 (* QuickChick (forAllCongressChainTraces 5 state_proposals_proposed_in_valid). *)
 (* coqtop-stdout:+++ Passed 10000 tests (0 discards) *)
 
-Definition reachableFrom_chaintrace_congress (cb : ChainBuilder) pf : Checker :=
+Definition reachableFrom_chaintrace_congress (cb : ChainBuilderDF) pf : Checker :=
   reachableFrom_chaintrace cb (gCongressChain 1) pf.
 
 Notation "lc '~~>' pf" :=

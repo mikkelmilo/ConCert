@@ -28,6 +28,9 @@ Close Scope address_scope.
 
 (* -------------------------- Tests of the Buggy Congress Implementation -------------------------- *)
 
+(* Use depth-first execution for these tests *)
+Definition ChainBuilder := ChainBuilderDF.
+
 Let creator := BoundedN.of_Z_const AddrSize 10.
 
 Definition rules := {|

@@ -255,29 +255,30 @@ End FA2ClientGens.
 Section FA2HookGens.
 
 End FA2HookGens.
+  Context {ChainBuilder : ChainBuilderType}.
+  Context `{Show ChainBuilder}.
+  (* Combine fa2 action generator, client action generator, and hook generator into one generator *)
+  Definition gFA2Actions (env : Environment) (size : nat) : GOpt Action :=
+    backtrack [
+      (2, gFA2TokenAction env);
+      (1, gClientAction env)
+    ].
 
-(* Combine fa2 action generator, client action generator, and hook generator into one generator *)
-Definition gFA2Actions (env : Environment) (size : nat) : GOpt Action :=
-  backtrack [
-    (2, gFA2TokenAction env);
-    (1, gClientAction env)
-  ].
+  Definition gFA2ChainTraceList max_acts_per_block cb length :=
+    let max_act_depth := 1 in
+    gChain cb gFA2Actions length 1 max_acts_per_block.
 
-Definition gFA2ChainTraceList max_acts_per_block cb length :=
-  let max_act_depth := 1 in
-  gChain cb gFA2Actions length 1 max_acts_per_block.
+  (* the '1' fixes nr of actions per block to 1 *)
+  Definition token_reachableFrom (cb : ChainBuilder) pf : Checker :=
+    reachableFrom_chaintrace cb (gFA2ChainTraceList 1) pf.
 
-(* the '1' fixes nr of actions per block to 1 *)
-Definition token_reachableFrom (cb : ChainBuilder) pf : Checker :=
-  reachableFrom_chaintrace cb (gFA2ChainTraceList 1) pf.
-
-Definition token_reachableFrom_implies_reachable {A} 
-                                                 (size : nat) 
-                                                 (cb : ChainBuilder) 
-                                                 (pf1 : ChainState -> option A)
-                                                 pf2
-                                                  : Checker :=
-  reachableFrom_implies_chaintracePropSized size cb (gFA2ChainTraceList 1) pf1 pf2.
+  Definition token_reachableFrom_implies_reachable {A} 
+                                                  (size : nat) 
+                                                  (cb : ChainBuilder) 
+                                                  (pf1 : ChainState -> option A)
+                                                  pf2
+                                                    : Checker :=
+    reachableFrom_implies_chaintracePropSized size cb (gFA2ChainTraceList 1) pf1 pf2.
 
 End FA2Gens.
 
