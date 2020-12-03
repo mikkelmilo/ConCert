@@ -125,7 +125,7 @@ Section EIP20Token.
    | Some (transfer_from from to amount) => without_actions (try_transfer_from sender from to amount state)
    | Some (approve delegate amount) => without_actions (try_approve sender delegate amount state)
    (* transfer actions to this contract are not allowed *)
-         | None => None
+   | None => None
    end.
   Close Scope Z_scope.
 
