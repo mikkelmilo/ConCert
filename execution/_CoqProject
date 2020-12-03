@@ -42,9 +42,11 @@ tests/CongressTests/Congress_BuggyGens.v
 tests/CongressTests/Congress_BuggyPrinters.v
 tests/CongressTests/Congress_BuggyTests.v
 tests/DexterTests/Dexter.v
+tests/DexterTests/DexterBuggy.v
 tests/DexterTests/DexterGens.v
 tests/DexterTests/DexterPrinters.v
 tests/DexterTests/DexterTests.v
+tests/DexterTests/NewDexterTests.v
 tests/EIP20Tests/EIP20TokenGens.v
 tests/EIP20Tests/EIP20TokenPrinters.v
 tests/EIP20Tests/EIP20TokenTests.v
