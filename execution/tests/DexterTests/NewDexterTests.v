@@ -12,7 +12,7 @@ From ConCert.Execution.QCTests Require Import
   TestUtils TraceGens ChainPrinters SerializablePrinters.
 From ConCert.Utils Require Import RecordUpdate.
 From Coq Require Import List.
-From Coq Require Import Morphisms.
+(* From Coq Require Import Morphisms. *)
 
 Import ListNotations.
 Import RecordSetNotations.
@@ -31,7 +31,6 @@ Instance showChainBuilderBF : Show ChainBuilderBF :=
              ++ "|}" ++ nl
 |}.
 Close Scope string_scope.
-(* Print HintDb typeclass_instances. *)
 
 Definition token_pool_size := 100%N.
 
@@ -43,12 +42,13 @@ Definition token_setup : EIP20Token.Setup := {|
 Definition deploy_token : @ActionBody LocalChainBase := create_deployment 0 EIP20Token.contract token_setup.
 Definition token_caddr : Address := BoundedN.of_Z_const AddrSize 128%Z.
 
+(* Dexter will have 60 tokens in reverse initially *)
 Definition dexter_setup : DexterBuggy.Setup := {|
   token_caddr_ := token_caddr;
   token_pool_  := (token_pool_size - 40);  
 |}.
 
-(* The Dexter contract gets 30 money initially *)
+(* The Dexter contract gets 30 money/tez initially *)
 Definition deploy_dexter : @ActionBody LocalChainBase := create_deployment 30 DexterBuggy.contract dexter_setup.
 Definition dexter_caddr : Address := BoundedN.of_Z_const AddrSize 129%Z.
 
@@ -62,7 +62,7 @@ Definition exchange_tokens_to_money_act owner amount :=
   |}))).
 
 
-(* Setup a chain with fa2 contract, and dexter contract deployed.
+(* Setup a chain with token contract, and dexter contract deployed.
    Also adds some tokens to person_1 and dexter contract, and adds some operators on the fa2 contract *)
 Definition chain0 : ChainBuilderBF :=
   unpack_result (TraceGens.add_block builder_initial []).
@@ -70,17 +70,10 @@ Definition chain0 : ChainBuilderBF :=
 Definition chain1 : ChainBuilderBF :=
   unpack_result (TraceGens.add_block chain0
   [  build_act creator (act_transfer person_1 10)
-    (* ; build_act creator (act_transfer person_2 10) *)
     ; build_act creator deploy_token
     ; build_act creator deploy_dexter
-    (* let creator transfer tokens on behalf of dexter *)
-    (* ; add_as_operator_act dexter_caddr creator 100000%N *)
     
-    (* transfer 100 tokens to person_1 *)
     ; build_act creator (act_call token_caddr 0%Z (serialize _ _ (EIP20Token.transfer person_1 40%N)))
-    (* transfer 100 tokens to person_2 from dexter's reserve *)
-    (* ; build_act creator (act_call token_caddr 0%Z (serialize _ _ (EIP20Token.transfer person_2 10%N))) *)
-    (* transfer remaining tokens (majority) to dexter contract *)
     ; build_act creator (act_call token_caddr 0%Z (serialize _ _ (EIP20Token.transfer dexter_caddr (token_pool_size - 40)%N)))
     (* let dexter transfer tokens on behalf of person_1 and person_2 *)
     ; add_as_operator_act person_1 dexter_caddr token_pool_size
@@ -125,17 +118,6 @@ Definition dexter_token_pool (env : Environment) : N :=
     do s <- dexter_state env ;
     Some s.(token_pool)
     ).
-
-Compute (account_tokens chain1 dexter_caddr).
-(* 80%N *)
-Compute (account_tokens chain1 person_1).
-(* 10%N *)
-Compute (account_tokens chain1 person_2).
-(* 10%N *)
-Compute person_1_initial_balance.
-(* 10%Z *)
-Compute (dexter_liquidity chain1).
-(* 30%Z *)
 
 Open Scope Z_scope.
 Coercion Z.of_N : N >-> Z.
