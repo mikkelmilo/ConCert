@@ -51,7 +51,6 @@ Arguments lmd_init_prelude {_ _ _ _ _}.
 Arguments lmd_receive {_ _ _ _ _}.
 Arguments lmd_entry_point {_ _ _ _ _}.
 
-(* Machinery for specializing chain base *)
 Definition extract_template_env_specialize
            (params : extract_template_env_params)
            (Σ : global_env)
@@ -63,10 +62,7 @@ Definition extract_template_env_specialize
   wfΣ <- check_wf_env_func params Σ;;
   extract_pcuic_env (pcuic_args params) Σ wfΣ seeds ignore.
 
-(* Axiom assume_env_wellformed : forall Σ, ∥wf Σ∥. *)
-
 Definition extract_template_env_within_coq_specialize := extract_template_env extract_within_coq.
-
 
 Definition printLiquidityDefs_ 
            (extract_template_env : global_env -> KernameSet.t -> (kername -> bool) -> result ExAst.global_env string)

@@ -211,7 +211,7 @@ Section EIP20TokenExtraction.
       that removes application of boxes to constants and constructors. *)
 
   Time MetaCoq Run
-      (t <- liquidity_extraction_specialize PREFIX TT_remap_eip20token TT_rename_eip20token EIP20Token_MODULE ;;
+      (t <- liquidity_extraction PREFIX TT_remap_eip20token TT_rename_eip20token EIP20Token_MODULE ;;
       tmDefinition EIP20Token_MODULE.(lmd_module_name) t).
 
   Print liquidity_eip20token.
