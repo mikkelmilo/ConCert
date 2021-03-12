@@ -51,6 +51,7 @@ Arguments lmd_init_prelude {_ _ _ _ _}.
 Arguments lmd_receive {_ _ _ _ _}.
 Arguments lmd_entry_point {_ _ _ _ _}.
 
+(* Machinery for specializing chain base *)
 Definition extract_template_env_specialize
            (params : extract_template_env_params)
            (Σ : global_env)
@@ -62,7 +63,17 @@ Definition extract_template_env_specialize
   wfΣ <- check_wf_env_func params Σ;;
   extract_pcuic_env (pcuic_args params) Σ wfΣ seeds ignore.
 
-Definition extract_template_env_within_coq_specialize := extract_template_env extract_within_coq.
+Definition extract_template_env_specialize_test
+           (Σ : global_env)
+           (init receive : kername)
+           (ignore : list kername) : result PCUICAst.global_env string :=
+  let seeds := KernameSet.union (KernameSet.singleton init) (KernameSet.singleton receive) in
+  let ignore := (fun k => List.existsb (eq_kername k) ignore) in
+  let Σ := SafeTemplateChecker.fix_global_env_universes Σ in
+  let Σ := TemplateToPCUIC.trans_global_decls Σ in
+  specialize_ChainBase_env Σ.
+
+Definition extract_template_env_within_coq_specialize := extract_template_env_specialize extract_within_coq.
 
 Definition printLiquidityDefs_ 
            (extract_template_env : global_env -> KernameSet.t -> (kername -> bool) -> result ExAst.global_env string)
@@ -108,7 +119,6 @@ Definition printLiquidityDefs_specialize := printLiquidityDefs_ extract_template
 Definition liquidity_ignore_default :=
   [
     <%% prod %%>
-    ; <%% @Serializable %%>
     ; <%% @Chain %%>
     ; <%% @ActionBody %%>
     ; <%% @ChainBase %%>
@@ -124,6 +134,54 @@ Definition liquidity_ignore_default :=
     ; <%% @SerializedValue %%>
     ; <%% @SerializedType %%>
 ].
+
+
+Definition TT_remap_default : list (kername * string) :=
+  [
+    (* types *)
+    remap <%% Z %%> "tez"
+  ; remap <%% N %%> "nat"
+  ; remap <%% nat %%> "nat"
+  ; remap <%% bool %%> "bool"
+  ; remap <%% unit %%> "unit"
+  ; remap <%% list %%> "list"
+  ; remap <%% @fst %%> "fst"
+  ; remap <%% @snd %%> "snd"
+  ; remap <%% option %%> "option"
+  ; remap <%% gmap.gmap %%> "map"
+  ; remap <%% positive %%> "nat"
+  ; remap <%% Amount %%> "tez"
+  ; remap <%% @Address %%> "address"
+  (* ; remap <%% @ContractCallContext %%> "(adress * (address * int))" *)
+
+  (* operations *)
+  ; remap <%% List.fold_left %%> "List.fold"
+  ; remap <%% Pos.add %%> "addNat"
+  ; remap <%% Pos.sub %%> "subNat"
+  ; remap <%% Pos.leb %%> "leNat"
+  ; remap <%% Pos.eqb %%> "eqNat"
+  ; remap <%% Z.add %%> "addTez"
+  ; remap <%% Z.sub %%> "subTez"
+  ; remap <%% Z.leb %%> "leTez"
+  ; remap <%% Z.ltb %%> "ltTez"
+  ; remap <%% Z.eqb %%> "eqTez"
+  ; remap <%% Z.gtb %%> "gtbTez"
+  ; remap <%% N.add %%> "addInt"
+  ; remap <%% N.sub %%> "subInt"
+  ; remap <%% N.leb %%> "leInt"
+  ; remap <%% N.ltb %%> "ltInt"
+  ; remap <%% N.eqb %%> "eqInt"
+  ; remap <%% andb %%> "andb"
+  ; remap <%% negb %%> "not"
+  ; remap <%% orb %%> "orb"
+
+  (* Maps *)
+  ; remap <%% @stdpp.base.insert %%> "Map.add"
+  ; remap <%% @stdpp.base.lookup %%> "Map.find_opt"
+  ; remap <%% @stdpp.base.empty %%> "Map.empty"
+  ; remap <%% @address_eqdec %%> ""
+  ; remap <%% @address_countable %%> ""
+  ].
 
 (* We assume the structure of the context from the [PreludeExt]:
   current_time , sender_addr, sent_amount, acc_balance *)
@@ -172,7 +230,7 @@ Definition wrap_in_delimiters s :=
   String.concat nl ["";"(*START*)"; s; "(*END*)"].
 
 Definition liquidity_extraction_ {msg ctx params storage operation : Type}
-           (printLiquidityDefs : string ->
+           (printLiquidityDefs_ : string ->
                                  global_env ->
                                  env string ->
                                  list kername ->
@@ -184,11 +242,12 @@ Definition liquidity_extraction_ {msg ctx params storage operation : Type}
   '(Σ,_) <- tmQuoteRecTransp m false ;;
   init_nm <- extract_def_name m.(lmd_init);;
   receive_nm <- extract_def_name m.(lmd_receive);;
+  let TT_defs := (TT_defs ++ TT_remap_default)%list in
   let ignore := (map fst TT_defs ++ liquidity_ignore_default)%list in
   let TT :=
       (TT_ctors ++ map (fun '(kn,d) => (string_of_kername kn, d)) TT_defs)%list in
   p <- tmEval lazy
-             (printLiquidityDefs prefix Σ TT ignore
+             (printLiquidityDefs_ prefix Σ TT ignore
                                  liquidity_call_ctx
                                  m.(lmd_init_prelude)
                                  init_nm receive_nm) ;;
@@ -198,6 +257,22 @@ Definition liquidity_extraction_ {msg ctx params storage operation : Type}
            (wrap_in_delimiters (concat (nl ++ nl) [m.(lmd_prelude); s; m.(lmd_entry_point)]))
   | inr s => tmFail s
   end.
+
+Definition liquidity_extraction_test {msg ctx params storage operation : Type}
+           (prefix : string)
+           (TT_defs : list (kername *  string))
+           (TT_ctors : MyEnv.env string)
+           (m : LiquidityMod msg ctx params storage operation) :=
+  '(Σ,_) <- tmQuoteRecTransp m false ;;
+  init_nm <- extract_def_name m.(lmd_init);;
+  receive_nm <- extract_def_name m.(lmd_receive);;
+  let ignore := (map fst TT_defs ++ liquidity_ignore_default)%list in
+  let TT :=
+      (TT_ctors ++ map (fun '(kn,d) => (string_of_kername kn, d)) TT_defs)%list in
+  tmEval lazy
+             (match extract_template_env_specialize_test Σ init_nm receive_nm ignore with
+             | Ok a => a
+             | Err _ => [] end).
 
 (* Liquidity extraction *without* chainbase specialization *)
 Definition liquidity_extraction {msg ctx params storage operation : Type} := @liquidity_extraction_ msg ctx params storage operation printLiquidityDefs.

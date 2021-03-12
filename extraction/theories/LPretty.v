@@ -156,16 +156,17 @@ Section print_term.
         if (Nat.eqb #|oib.(ind_type_vars)| 0) then ""
         else let ps := concat "," (mapi (fun i _ => print_type_var i) oib.(ind_type_vars)) in
              (parens (Nat.eqb #|oib.(ind_type_vars)| 1) ps) ++ " " in
-    (* one-constructor inductives are assumed to be records *)
-    match oib.(ExAst.ind_ctors) with
-    | [build_record_ctor] =>
+    (* one-constructor inductives with non-empty ind_projs (projection identifiers) 
+       are assumed to be records *)
+    match oib.(ExAst.ind_ctors), oib.(ExAst.ind_projs) with
+    | [build_record_ctor], _::_ =>
       let '(_, ctors) := build_record_ctor in
       let projs_and_ctors := combine oib.(ExAst.ind_projs) ctors in
       let projs_and_ctors_printed := map (fun '(p, ty) => print_proj (capitalize prefix) TT (p.1, ty)) projs_and_ctors in
       "type " ++ params ++ uncapitalize ind_nm ++ " = {" ++ nl
               ++ concat (";" ++ nl) projs_and_ctors_printed ++ nl
               ++  "}"
-    | _ => "type " ++ params ++ uncapitalize ind_nm ++" = "
+    | _,_ => "type " ++ params ++ uncapitalize ind_nm ++" = "
             ++ nl
             ++ concat "| " (map (fun p => print_ctor (capitalize prefix) TT p ++ nl) oib.(ExAst.ind_ctors))
     end.
@@ -417,7 +418,7 @@ Section print_term.
         | None     => let nm' := from_option (look TT nm) ((capitalize prefix) ++ nm) in
                       parens top (print_uncurried nm' apps)
         end
-    | _ =>  parens (top || inapp) (print_term prefix FT TT Γ false true f ++ " " ++ print_term prefix FT TT Γ false false l)
+    | _ =>  parens (top || inapp) (print_term prefix FT TT Γ false true f ++ "..." ++ print_term prefix FT TT Γ false false l)
     end
   | tConst c =>
     let cst_name := string_of_kername c in
