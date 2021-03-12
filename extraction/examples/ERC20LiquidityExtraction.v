@@ -7,7 +7,7 @@ From MetaCoq.Erasure Require Import Loader.
 
 From ConCert.Embedding Require Import MyEnv CustomTactics.
 From ConCert.Embedding Require Import Notations.
-From ConCert.Embedding Require Import SimpleBlockchain.
+(* From ConCert.Embedding Require Import SimpleBlockchain. *)
 From ConCert.Embedding.Extraction Require Import PreludeExt.
 From ConCert.Extraction Require Import LPretty LiquidityExtract Common Optimize.
 From ConCert.Execution Require Import Automation.
@@ -20,7 +20,6 @@ Local Open Scope string_scope.
 From MetaCoq.Template Require Import All.
 
 Import ListNotations.
-Import AcornBlockchain.
 Import MonadNotation.
 
 Open Scope Z.
@@ -67,7 +66,7 @@ Definition TT_remap_default : list (kername * string) :=
 
   (* Maps *)
   ; remap <%% @stdpp.base.insert %%> "Map.add"
-  ; remap <%% @stdpp.base.lookup %%> "Map.find_opt"
+  ; remap <%% @stdpp.base.lookup %%> "Map.find"
   ; remap <%% @stdpp.base.empty %%> "Map.empty"
   ; remap <%% @address_eqdec %%> ""
   ; remap <%% @address_countable %%> ""
@@ -85,58 +84,16 @@ Section EIP20TokenExtraction.
 
   (* Notation storage := ((time_coq × Z × address_coq) × Maps.addr_map_coq × bool). *)
   Notation params := (ContractCallContext × option EIP20Token.Msg).
-  (* Definition crowdfunding_init (ctx : SimpleCallCtx)
-             (setup : (time_coq × Z × address_coq)) : option storage :=
-    if ctx.2.2.1 =? 0 then Some (setup, (Maps.mnil, false)) else None.
-    (* (unfolded Init.init) setup ctx. *)
-   *)
-  Definition receive (ctx : ContractCallContext)
-                     (state : State)
-                     (maybe_msg : option Msg) : option (list ActionBody * State) :=
-    let sender := ctx.(ctx_from) in
-    let without_actions := option_map (fun new_state => ([], new_state)) in
-    (* Only allow calls with no money attached *)
-    if ctx.(ctx_amount) >? 0
-    then None
-    else match maybe_msg with
-   | Some (transfer to amount) => without_actions (try_transfer sender to amount state)
-   | Some (transfer_from from to amount) => without_actions (try_transfer_from sender from to amount state)
-   | Some (approve delegate amount) => without_actions (try_approve sender delegate amount state)
-   (* transfer actions to this contract are not allowed *)
-         | None => None
-   end.
+  Open Scope N_scope.
 
-  Definition receive_wrapper
-             (params : params)
-             (st : State) : option (list ActionBody × State) :=
-    receive params.1 st params.2.
-
-  Definition init (ctx : ContractCallContext) (setup : EIP20Token.Setup) : option EIP20Token.State :=
-    Some {| total_supply := setup.(init_amount);
-            balances := FMap.add (EIP20Token.owner setup) (init_amount setup) FMap.empty;
-            allowances := FMap.empty |}.
-  Open Scope Z_scope.
-
-  (* A specialized version of FMap's partial alter, w.r.t. FMap Address N *)
+    (* A specialized version of FMap's partial alter, w.r.t. FMap Address N *)
   Definition partial_alter_addr_nat : string :=
        "let partial_alter_addr_nat (f : nat option -> nat option)" ++ nl
     ++ "                           (k : address)" ++ nl
     ++ "                           (m : (address,nat) map) : (address,nat) map =" ++ nl
-    ++ "  match Map.find_opt k m with" ++ nl
+    ++ "  match Map.find k m with" ++ nl
     ++ "    Some v -> Map.update k (f v) m" ++ nl
     ++ "  | None -> Map.update k (f (None : nat option)) m" ++ nl.
-
-  Definition option_map_state_acts : string :=
-       "let option_map_state_acts (f : state -> (state * operation list)) (o : state option) =" ++ nl
-    ++ "  match o with" ++ nl
-    ++ "    Some a -> Some (f a)" ++ nl
-    ++ "    | None -> (None : (state * operation list))".
-
-  Definition bind_option_state : string :=
-       "let bind_option_state (a, b, c : unit) (m : state option) (f : state -> state option) : state option =" ++ nl
-    ++ "match m with" ++ nl
-    ++ "    Some a -> f a" ++ nl
-    ++ "  | None -> (None : state option)".
 
   Definition with_default_N : string :=
        "let with_default_N (n : nat) (m : nat option) : n =" ++ nl
@@ -144,13 +101,88 @@ Section EIP20TokenExtraction.
     ++ "    Some m -> m" ++ nl
     ++ "  | None -> n".
 
-    (* LiquidityMod msg _ (Z × address) storage operation *)
-  Definition EIP20Token_MODULE : LiquidityMod params _ EIP20Token.Setup EIP20Token.State ActionBody :=
+  Definition ctx_from_ :=
+    "let ctx_from (c : address * (address * tez )) = c.(0)".
+
+  Definition test_try_transfer (from : Address)
+      (to : Address)
+      (amount : TokenValue)
+      (state : State) : option State :=
+    let from_balance := Extras.with_default 0 (FMap.find from state.(balances)) in
+    if from_balance <? amount
+    then None
+    else let new_balances := FMap.add from (from_balance - amount) state.(balances) in
+        let new_balances := FMap.partial_alter (fun balance => Some (Extras.with_default 0 balance + amount)) to new_balances in
+        Some ({|
+          balances := new_balances;
+          total_supply := state.(total_supply);
+          allowances := state.(allowances);
+        |}).
+  Open Scope bool_scope.
+  Definition test_try_transfer_from (delegate : Address)
+      (from : Address)
+      (to : Address)
+      (amount : TokenValue)
+      (state : State) : option State :=
+  match FMap.find from state.(allowances) with
+  | Some from_allowances_map =>
+  match FMap.find delegate from_allowances_map with
+  | Some delegate_allowance =>
+  let from_balance := Extras.with_default 0 (FMap.find from state.(balances)) in
+  if (delegate_allowance <? amount) || (from_balance <? amount)
+  then None
+  else let new_allowances := FMap.add delegate (delegate_allowance - amount) from_allowances_map in
+      let new_balances := FMap.add from (from_balance - amount) state.(balances) in
+      let new_balances := FMap.partial_alter (fun balance => Some (Extras.with_default 0 balance + amount)) to new_balances in
+      Some ({|
+        balances := new_balances;
+        allowances := FMap.add from new_allowances state.(allowances);
+        total_supply := state.(total_supply)|})
+  | _ => None
+  end
+  | _ => None
+  end.
+
+  Definition test_init (ctx : ContractCallContext) (setup : EIP20Token.Setup) : option EIP20Token.State :=
+    Some {| total_supply := setup.(init_amount);
+            balances := FMap.empty;
+            allowances := FMap.empty |}.
+
+  Open Scope Z_scope.
+  Definition test_receive
+      (ctx : ContractCallContext)
+      (state : EIP20Token.State)
+      (maybe_msg : option EIP20Token.Msg)
+    : option (list ActionBody * EIP20Token.State) :=
+    let sender := ctx.(ctx_from) in
+    let without_actions := option_map (fun new_state => ([], new_state)) in
+    match maybe_msg with
+    | Some (transfer to amount) => without_actions (test_try_transfer sender to amount state)
+    | Some (transfer_from from to amount) => without_actions (test_try_transfer_from sender from to amount state)
+    (* Other endpoints are not included in this extraction test *)
+    | _ => None
+    end.
+
+  Definition receive_wrapper
+             (params : params)
+             (st : State) : option (list ActionBody × State) :=
+    test_receive params.1 st params.2.
+
+  Definition init (ctx : ContractCallContext) (setup : EIP20Token.Setup) : option EIP20Token.State :=
+    Some {| total_supply := setup.(init_amount);
+            balances := FMap.add (EIP20Token.owner setup) (init_amount setup) FMap.empty;
+            allowances := FMap.empty |}.
+  Open Scope Z_scope.
+
+  Definition EIP20Token_MODULE : LiquidityMod params ContractCallContext EIP20Token.Setup EIP20Token.State ActionBody :=
   {| (* a name for the definition with the extracted code *)
       lmd_module_name := "liquidity_eip20token" ;
 
       (* definitions of operations on pairs and ints *)
-      lmd_prelude := prod_ops ++ nl ++ int_ops;
+      lmd_prelude := prod_ops ++ nl ++ int_ops ++ nl 
+                  ++ partial_alter_addr_nat ++ nl 
+                  ++ with_default_N ++ nl
+                  ++ ctx_from_ ;
 
       (* initial storage *)
       lmd_init := init ;
@@ -166,14 +198,14 @@ Section EIP20TokenExtraction.
 
   Definition TT_remap_eip20token : list (kername * string) :=
   TT_remap_default ++ [
-    remap <%% @ContractCallContext %%> "(adress * (address * int))"
-  ; remap <%% eqb_addr %%> "eq_addr"
+    (* remap <%% @ContractCallContext %%> "(adress * (address * int))" *)
+    remap <%% eqb_addr %%> "eq_addr"
   ; remap <%% @Extras.with_default %%> "with_default_N"
   ; remap <%% @Monads.bind %%> "bind_option_state"
   ; remap <%% Monads.Monad_option %%> "()"
 
   ; remap <%% @stdpp.base.insert %%> "Map.add"
-  ; remap <%% @stdpp.base.lookup %%> "Map.find_opt"
+  ; remap <%% @stdpp.base.lookup %%> "Map.find"
   ; remap <%% @stdpp.base.empty %%> "Map.empty"
   ; remap <%% @stdpp.base.partial_alter %%> "partial_alter_addr_nat"
   ; remap <%% @gmap.gmap_partial_alter %%> ""
@@ -191,27 +223,13 @@ Section EIP20TokenExtraction.
     ; ("N0", "0n")
     ; ("N1", "1n")
     ; ("nil", "[]")
-      (* monad hack *)
-    ; ("Monad_option", "()")
     ; ("tt", "()") ].
 
-  (* Time MetaCoq Run
-  (t <- CameLIGO_extraction PREFIX TT_remap_eip20token TT_rename_eip20token LIGO_EIP20Token_MODULE ;;
-    tmDefinition LIGO_EIP20Token_MODULE.(lmd_module_name) t
-  ).
 
-  Print cameLIGO_eip20token.
-
-  Definition printed := Eval vm_compute in cameLIGO_eip20token.
-    (** We redirect the extraction result for later processing and compiling with the CameLIGO compiler *)
-  Redirect "examples/cameligo-extract/eip20tokenCertifiedExtraction.ligo" MetaCoq Run (tmMsg printed). *)
-
-  (** We run the extraction procedure inside the [TemplateMonad].
-      It uses the certified erasure from [MetaCoq] and the certified deboxing procedure
-      that removes application of boxes to constants and constructors. *)
+  (* Compute (liquidity_extraction_test PREFIX TT_remap_eip20token TT_rename_eip20token EIP20Token_MODULE). *)
 
   Time MetaCoq Run
-      (t <- liquidity_extraction PREFIX TT_remap_eip20token TT_rename_eip20token EIP20Token_MODULE ;;
+      (t <- liquidity_extraction_specialize PREFIX TT_remap_eip20token TT_rename_eip20token EIP20Token_MODULE ;;
       tmDefinition EIP20Token_MODULE.(lmd_module_name) t).
 
   Print liquidity_eip20token.
