@@ -490,7 +490,7 @@ Section TestExtractionPlayground.
                         ++ CameLIGOPretty.printMain |}.
 
 
-  (* Time MetaCoq Run
+  Time MetaCoq Run
   (t <- CameLIGO_extraction PREFIX TT_remap_eip20token TT_rename_eip20token playground_module ;;
     tmDefinition playground_module.(lmd_module_name) t
   ).
@@ -499,6 +499,6 @@ Section TestExtractionPlayground.
 
   Definition printed := Eval vm_compute in playground_mod.
     (** We redirect the extraction result for later processing and compiling with the CameLIGO compiler *)
-  Redirect "examples/cameligo-extract/eip20tokenCertifiedExtraction.ligo" MetaCoq Run (tmMsg printed). *)
+  Redirect "examples/cameligo-extract/eip20tokenCertifiedExtraction.ligo" MetaCoq Run (tmMsg printed).
 
 End TestExtractionPlayground.
